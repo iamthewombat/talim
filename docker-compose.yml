@@ -1,0 +1,64 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: talim-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  talim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: talim-app
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
+      - TALIM_REDIS_URL=redis://redis:6379/0
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - TALIM_DISCORD_TOKEN=${TALIM_DISCORD_TOKEN:-}
+      - TALIM_DISCORD_ALERTS_CHANNEL=${TALIM_DISCORD_ALERTS_CHANNEL:-}
+      - TALIM_DISCORD_CHAT_CHANNEL=${TALIM_DISCORD_CHAT_CHANNEL:-}
+      - TALIM_DISCORD_LOG_CHANNEL=${TALIM_DISCORD_LOG_CHANNEL:-}
+    volumes:
+      - ./data:/app/data
+      - talim-state:/app/state
+    expose:
+      - "8000"
+
+  nanoclaw:
+    build:
+      context: .
+      dockerfile: nanoclaw/Dockerfile
+    container_name: talim-nanoclaw
+    restart: unless-stopped
+    depends_on:
+      - talim
+    environment:
+      - TALIM_BRIDGE_URL=http://talim:8000
+      - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: talim-nginx
+    restart: unless-stopped
+    depends_on:
+      - talim
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+
+volumes:
+  talim-state:

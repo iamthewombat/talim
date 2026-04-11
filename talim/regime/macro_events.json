@@ -1,0 +1,11 @@
+{
+  "_comment": "High-impact macro release dates the matcher should exclude. PoC seed list — extend in production.",
+  "dates": [
+    "2024-09-18",
+    "2024-11-07",
+    "2024-12-18",
+    "2025-01-29",
+    "2025-03-19",
+    "2025-05-07"
+  ]
+}

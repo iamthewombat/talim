@@ -1,0 +1,202 @@
+"""Tests for the Talim bridge API and stub NanoClaw router (WP-16)."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from talim.api.bridge import create_app
+from nanoclaw.router import Intent, classify_intent, route_message
+
+
+SECRET = "test-secret-shhh"
+
+
+@pytest.fixture(autouse=True)
+def _set_secret(monkeypatch):
+    monkeypatch.setenv("TALIM_BRIDGE_SECRET", SECRET)
+
+
+@pytest.fixture
+def fake_bridge_calls():
+    return []
+
+
+@pytest.fixture
+def fake_resume_calls():
+    return []
+
+
+@pytest.fixture
+def app(fake_bridge_calls, fake_resume_calls):
+    def fake_bridge(message, thread_id):
+        fake_bridge_calls.append((message, thread_id))
+        return {
+            "response_message": f"echo:{message}",
+            "thread_id": thread_id,
+        }
+
+    def fake_resume(thread_id, approved):
+        fake_resume_calls.append((thread_id, approved))
+        return {
+            "thread_id": thread_id,
+            "signal_approved": approved,
+            "pending_signal": None,
+        }
+
+    return create_app(bridge_message_fn=fake_bridge, resume_fn=fake_resume)
+
+
+@pytest.fixture
+def client(app):
+    return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# /talim/health (no auth)
+# ---------------------------------------------------------------------------
+
+class TestHealth:
+    def test_health(self, client):
+        r = client.get("/talim/health")
+        assert r.status_code == 200
+        assert r.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# /talim/converse
+# ---------------------------------------------------------------------------
+
+class TestConverseEndpoint:
+    def test_requires_secret(self, client):
+        r = client.post("/talim/converse", json={"message": "hi"})
+        assert r.status_code == 401
+
+    def test_rejects_wrong_secret(self, client):
+        r = client.post(
+            "/talim/converse",
+            json={"message": "hi"},
+            headers={"X-Talim-Secret": "wrong"},
+        )
+        assert r.status_code == 401
+
+    def test_invokes_bridge(self, client, fake_bridge_calls):
+        r = client.post(
+            "/talim/converse",
+            json={"message": "what's my P&L?", "thread_id": "t-1"},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["thread_id"] == "t-1"
+        assert body["response_message"] == "echo:what's my P&L?"
+        assert "response_message" in body["state_keys"]
+        assert fake_bridge_calls == [("what's my P&L?", "t-1")]
+
+    def test_validation_rejects_empty(self, client):
+        r = client.post(
+            "/talim/converse",
+            json={"message": ""},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# /talim/resume
+# ---------------------------------------------------------------------------
+
+class TestResumeEndpoint:
+    def test_requires_secret(self, client):
+        r = client.post("/talim/resume", json={"thread_id": "x", "approved": True})
+        assert r.status_code == 401
+
+    def test_approve(self, client, fake_resume_calls):
+        r = client.post(
+            "/talim/resume",
+            json={"thread_id": "t-1", "approved": True},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body == {
+            "thread_id": "t-1",
+            "approved": True,
+            "pending_signal_cleared": True,
+        }
+        assert fake_resume_calls == [("t-1", True)]
+
+    def test_reject(self, client, fake_resume_calls):
+        r = client.post(
+            "/talim/resume",
+            json={"thread_id": "t-2", "approved": False},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        assert fake_resume_calls == [("t-2", False)]
+
+
+# ---------------------------------------------------------------------------
+# Round-trip via NanoClaw → bridge
+# ---------------------------------------------------------------------------
+
+class TestNanoClawRouter:
+    def test_classify_local(self):
+        assert classify_intent("hi there") is Intent.LOCAL
+        assert classify_intent("how's the weather") is Intent.LOCAL
+
+    def test_classify_talim(self):
+        assert classify_intent("what's my P&L?") is Intent.TALIM
+        assert classify_intent("show me the momentum signal") is Intent.TALIM
+        assert classify_intent("run a backtest") is Intent.TALIM
+
+    def test_local_route_does_not_forward(self):
+        result = route_message("hello")
+        assert result.intent is Intent.LOCAL
+        assert result.forwarded is False
+        assert "Hello" in result.response
+
+    def test_talim_route_forwards_via_injected_http(self, client):
+        # Adapt the FastAPI test client into a callable matching requests.post.
+        class _FakeResp:
+            def __init__(self, r):
+                self._r = r
+            def raise_for_status(self):
+                self._r.raise_for_status()
+            def json(self):
+                return self._r.json()
+
+        def fake_post(url, json, headers, timeout):
+            # Strip the base — TestClient takes paths.
+            path = url.split("//", 1)[-1].split("/", 1)[-1]
+            r = client.post("/" + path, json=json, headers=headers)
+            return _FakeResp(r)
+
+        result = route_message(
+            "what's my P&L?",
+            thread_id="nc-1",
+            talim_url="http://talim",
+            secret=SECRET,
+            http_post=fake_post,
+        )
+        assert result.intent is Intent.TALIM
+        assert result.forwarded is True
+        assert result.response == "echo:what's my P&L?"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end with real bridge_message (no LLM client)
+# ---------------------------------------------------------------------------
+
+class TestRealRoundTrip:
+    def test_real_bridge_message(self, monkeypatch):
+        monkeypatch.setenv("TALIM_BRIDGE_SECRET", SECRET)
+        app = create_app()  # use the real entry points
+        client = TestClient(app)
+        r = client.post(
+            "/talim/converse",
+            json={"message": "what's my P&L?", "thread_id": "real-1"},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        # Real notify with no LLM client falls back to "ack".
+        assert body["response_message"] == "ack"

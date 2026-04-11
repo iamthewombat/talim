@@ -1,0 +1,8 @@
+# Talim cron schedule. Install with: crontab scripts/cron.txt
+# All commands run inside the talim container via `docker exec`.
+
+# 5-minute heartbeat: invoke the cron entry point on the live graph.
+*/5 * * * 1-5 docker exec talim-app python -m talim.app.entrypoints cron >> /var/log/talim-cron.log 2>&1
+
+# Nightly data update at 02:00 UTC weekdays — Databento ES futures (WP-28).
+0 2 * * 1-5 docker exec talim-app python /app/scripts/ingest_databento.py --symbol ES --start $(date -d 'yesterday' +\%Y-\%m-\%d) --end $(date -d 'yesterday' +\%Y-\%m-\%d) --out /data >> /var/log/talim-cron.log 2>&1

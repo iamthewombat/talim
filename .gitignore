@@ -1,0 +1,39 @@
+# Virtual environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+.env
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Claude Code
+.claude/
+
+# Data
+data/
+*.parquet
+
+# SQLite
+*.db
+*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes
+nginx/certs/
+
+# Distribution
+dist/
+*.egg-info/
+build/
