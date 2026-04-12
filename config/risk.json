@@ -1,0 +1,13 @@
+{
+    "max_position_qty": 5.0,
+    "max_total_exposure": 100000.0,
+    "max_daily_drawdown": -2000.0,
+    "max_correlated_positions": 1,
+    "block_on_existing_same_instrument": true,
+    "correlation_groups": [
+        ["ES", "NQ", "YM", "RTY"],
+        ["GC", "SI"],
+        ["CL", "NG", "RB"],
+        ["6E", "6B", "6J"]
+    ]
+}

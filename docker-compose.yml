@@ -3,8 +3,11 @@ services:
     image: redis:7-alpine
     container_name: talim-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -47,6 +50,18 @@ services:
       - TALIM_BRIDGE_URL=http://talim:8000
       - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
 
+  scheduler:
+    image: aptible/supercronic:latest
+    container_name: talim-scheduler
+    restart: unless-stopped
+    depends_on:
+      - talim
+    environment:
+      - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
+    volumes:
+      - ./scripts/cron.txt:/app/cron.txt:ro
+    command: ["supercronic", "/app/cron.txt"]
+
   nginx:
     image: nginx:1.27-alpine
     container_name: talim-nginx
@@ -62,3 +77,4 @@ services:
 
 volumes:
   talim-state:
+  redis-data:

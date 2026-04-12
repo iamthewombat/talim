@@ -26,7 +26,12 @@ def fake_resume_calls():
 
 
 @pytest.fixture
-def app(fake_bridge_calls, fake_resume_calls):
+def fake_trigger_calls():
+    return []
+
+
+@pytest.fixture
+def app(fake_bridge_calls, fake_resume_calls, fake_trigger_calls):
     def fake_bridge(message, thread_id):
         fake_bridge_calls.append((message, thread_id))
         return {
@@ -42,7 +47,15 @@ def app(fake_bridge_calls, fake_resume_calls):
             "pending_signal": None,
         }
 
-    return create_app(bridge_message_fn=fake_bridge, resume_fn=fake_resume)
+    def fake_cron(thread_id="cron-main", **kwargs):
+        fake_trigger_calls.append(thread_id)
+        return {"last_scan_time": "2025-06-15T10:00:00", "thread_id": thread_id}
+
+    return create_app(
+        bridge_message_fn=fake_bridge,
+        resume_fn=fake_resume,
+        cron_trigger_fn=fake_cron,
+    )
 
 
 @pytest.fixture
@@ -132,6 +145,37 @@ class TestResumeEndpoint:
         )
         assert r.status_code == 200
         assert fake_resume_calls == [("t-2", False)]
+
+
+# ---------------------------------------------------------------------------
+# /talim/trigger
+# ---------------------------------------------------------------------------
+
+class TestTriggerEndpoint:
+    def test_requires_secret(self, client):
+        r = client.post("/talim/trigger")
+        assert r.status_code == 401
+
+    def test_trigger_default_thread(self, client, fake_trigger_calls):
+        r = client.post(
+            "/talim/trigger",
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["triggered"] is True
+        assert body["thread_id"] == "cron-main"
+        assert "last_scan_time" in body["state_keys"]
+        assert fake_trigger_calls == ["cron-main"]
+
+    def test_trigger_custom_thread(self, client, fake_trigger_calls):
+        r = client.post(
+            "/talim/trigger?thread_id=scan-42",
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        assert r.json()["thread_id"] == "scan-42"
+        assert fake_trigger_calls == ["scan-42"]
 
 
 # ---------------------------------------------------------------------------

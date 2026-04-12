@@ -241,6 +241,7 @@ class TestTalimState:
         # Meta
         "thread_id",
         "last_scan_time",
+        "halted",
     }
 
     def test_all_expected_fields_present(self):

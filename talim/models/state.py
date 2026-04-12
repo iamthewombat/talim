@@ -53,6 +53,7 @@ class TalimState(TypedDict, total=False):
     # --- Meta ---
     thread_id: str
     last_scan_time: str | None  # ISO timestamp of last cron scan
+    halted: bool  # kill switch — blocks all new signals at the router
 
 
 # Canonical list of all state fields for completeness checks

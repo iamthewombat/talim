@@ -17,6 +17,8 @@ from talim.app.nodes.converse import converse  # noqa: F401
 from talim.app.nodes.strategy_update import strategy_update  # noqa: F401
 from talim.app.nodes.notify import notify  # noqa: F401
 from talim.app.nodes.risk_check import risk_check, configure_risk_rules  # noqa: F401
+from talim.app.nodes.position_monitor import position_monitor  # noqa: F401
+from talim.app.nodes.reconcile import reconcile  # noqa: F401
 
 logger = logging.getLogger("talim.nodes")
 
@@ -29,6 +31,7 @@ def execute(state: TalimState) -> TalimState:
     """
     from datetime import datetime, timezone
     from talim.app.execute_context import get_execute_context
+    from talim.metrics import METRICS
 
     sig = state.get("pending_signal")
     update: TalimState = {"pending_signal": None}
@@ -50,6 +53,7 @@ def execute(state: TalimState) -> TalimState:
             qty=ctx.default_qty,
             strategy=sig.strategy,
         )
+        METRICS.inc("talim_orders_placed_total")
         logger.info(
             "execute: placed order %s status=%s", order.order_id, order.status.value
         )
@@ -91,4 +95,6 @@ __all__ = [
     "strategy_update",
     "backtest_run",
     "notify",
+    "position_monitor",
+    "reconcile",
 ]

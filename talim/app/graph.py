@@ -35,6 +35,7 @@ def build_graph(checkpointer=None):
 
     # Register nodes
     graph.add_node("signal_scanner", nodes.signal_scanner)
+    graph.add_node("position_monitor", nodes.position_monitor)
     graph.add_node("converse", nodes.converse)
     graph.add_node("router", nodes.router)
     graph.add_node("risk_check", nodes.risk_check)
@@ -55,8 +56,9 @@ def build_graph(checkpointer=None):
         {"signal_scanner": "signal_scanner", "converse": "converse"},
     )
 
-    # Both entry nodes flow into router
-    graph.add_edge("signal_scanner", "router")
+    # Scanner → position monitor → router; converse → router
+    graph.add_edge("signal_scanner", "position_monitor")
+    graph.add_edge("position_monitor", "router")
     graph.add_edge("converse", "router")
 
     # Router conditional edges

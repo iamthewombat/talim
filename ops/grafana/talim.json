@@ -1,0 +1,50 @@
+{
+  "dashboard": {
+    "title": "Talim Trading Dashboard",
+    "uid": "talim-main",
+    "panels": [
+      {
+        "title": "Signals Emitted",
+        "type": "stat",
+        "targets": [{"expr": "talim_signals_emitted_total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "title": "Risk Blocks",
+        "type": "stat",
+        "targets": [{"expr": "talim_risk_blocks_total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "title": "Orders Placed",
+        "type": "stat",
+        "targets": [{"expr": "talim_orders_placed_total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "title": "HITL Pending",
+        "type": "stat",
+        "targets": [{"expr": "talim_hitl_pending"}],
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "title": "Reconciler Divergences",
+        "type": "stat",
+        "targets": [{"expr": "talim_reconciler_divergences_total"}],
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 4}
+      },
+      {
+        "title": "Signals Over Time",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "rate(talim_signals_emitted_total[5m])", "legendFormat": "signals/s"},
+          {"expr": "rate(talim_risk_blocks_total[5m])", "legendFormat": "blocks/s"},
+          {"expr": "rate(talim_orders_placed_total[5m])", "legendFormat": "orders/s"}
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      }
+    ],
+    "time": {"from": "now-6h", "to": "now"},
+    "refresh": "30s"
+  }
+}

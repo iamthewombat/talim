@@ -1,8 +1,13 @@
-# Talim cron schedule. Install with: crontab scripts/cron.txt
-# All commands run inside the talim container via `docker exec`.
+# Talim cron schedule — consumed by supercronic in the scheduler container.
 
-# 5-minute heartbeat: invoke the cron entry point on the live graph.
-*/5 * * * 1-5 docker exec talim-app python -m talim.app.entrypoints cron >> /var/log/talim-cron.log 2>&1
+# 5-minute heartbeat: trigger a scan via the bridge API.
+*/5 * * * 1-5 curl -fsS -X POST http://talim:8000/talim/trigger -H "X-Talim-Secret: ${TALIM_BRIDGE_SECRET}" >> /var/log/talim-cron.log 2>&1
 
 # Nightly data update at 02:00 UTC weekdays — Databento ES futures (WP-28).
-0 2 * * 1-5 docker exec talim-app python /app/scripts/ingest_databento.py --symbol ES --start $(date -d 'yesterday' +\%Y-\%m-\%d) --end $(date -d 'yesterday' +\%Y-\%m-\%d) --out /data >> /var/log/talim-cron.log 2>&1
+0 2 * * 1-5 curl -fsS -X POST http://talim:8000/talim/trigger?thread_id=ingest-nightly -H "X-Talim-Secret: ${TALIM_BRIDGE_SECRET}" >> /var/log/talim-cron.log 2>&1
+
+# Hourly working_memory backup (WP-43).
+0 * * * * docker exec talim-app /app/scripts/backup.sh >> /var/log/talim-backup.log 2>&1
+
+# Daily full backup at 03:00 UTC.
+0 3 * * * docker exec talim-app /app/scripts/backup.sh >> /var/log/talim-backup.log 2>&1

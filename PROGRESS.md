@@ -95,6 +95,21 @@
 
 ---
 
+## Phase 8: Production Readiness
+
+| WP | Name | Status | Session Date | Notes |
+|----|------|--------|--------------|-------|
+| WP-34 | Position Monitor & Stop/Target Enforcement | `[x]` | 2026-04-11 | 17/17 tests passing (319 total) |
+| WP-35 | Order Reconciliation Loop | `[x]` | 2026-04-11 | 11/11 tests passing (330 total) |
+| WP-36 | P&L Source of Truth | `[x]` | 2026-04-11 | 9/9 tests passing (339 total) |
+| WP-38 | Scheduler / Cron Service | `[x]` | 2026-04-11 | 3 new tests (342 total) |
+| WP-39 | Risk Rules Config & Kill Switch | `[x]` | 2026-04-11 | 18/18 tests passing (360 total) |
+| WP-41 | Observability (Metrics, Logs, Alerts) | `[x]` | 2026-04-11 | 8/8 tests passing (368 total) |
+| WP-43 | Backup & Disaster Recovery | `[x]` | 2026-04-11 | 4/4 tests passing (372 total) |
+| WP-32 | Live Exchange Wiring & Testnet Soak | `[x]` | 2026-04-12 | 16/16 tests passing (388 total) |
+
+---
+
 ## Session Log
 
 | Date | WP(s) | Summary | Outcome |
@@ -118,3 +133,11 @@
 | 2026-04-07 | WP-17 | risk_check node + RiskRules (qty/exposure/dd/correlation), JSON loader, blocks routed through notify, 14 tests | All green (257 total) |
 | 2026-04-07 | WP-18 | Dockerfile, nanoclaw Dockerfile, docker-compose (redis/talim/nanoclaw/nginx), nginx.conf, healthcheck.sh, .env.example, cron.txt | 8 file-shape tests |
 | 2026-04-07 | WP-19 | Full simulated market day e2e: scan→signal→risk→HITL→resume→fill→bridge Q&A→strategy update→backtest→memory | 266 total tests green |
+| 2026-04-11 | WP-34 | Position monitor node: _check_exit for long/short stops+targets, wired between scanner→router in graph, 17 tests | All green (319 total) |
+| 2026-04-11 | WP-35 | Reconcile node: reconcile_positions diffs exchange vs memory vs state, RepairEvent, surfaces divergences via pending_notification, 11 tests | All green (330 total) |
+| 2026-04-11 | WP-36 | PnLTracker: refresh from exchange, daily_pnl accumulation, session rollover reset, custom timezone, PnLSnapshot, 9 tests | All green (339 total) |
+| 2026-04-11 | WP-38 | POST /talim/trigger endpoint, supercronic scheduler container in compose, cron.txt updated to use HTTP triggers, 3 new tests | All green (342 total) |
+| 2026-04-11 | WP-39 | config/risk.json template, validate_config + load_validated_config, kill switch (halted field, /halt + /resume-trading + /halt-status endpoints, risk_check blocks when halted), 18 tests | All green (360 total) |
+| 2026-04-11 | WP-41 | JSONFormatter structured logging, METRICS singleton (counters+gauges), /metrics Prometheus endpoint, risk_check+execute instrumented, ops/grafana/talim.json dashboard, 8 tests | All green (368 total) |
+| 2026-04-11 | WP-43 | scripts/backup.sh (sqlite3 .backup + optional S3 upload + 7-day prune), cron entries (hourly + daily), Redis AOF enabled, docs/disaster-recovery.md runbook, 4 tests | All green (372 total) |
+| 2026-04-12 | WP-32 | Exchange factory (mock/testnet/live), CcxtExchange mocked integration tests (order/position/balance/cancel), docs/exchange-setup.md runbook + soak checklist, 16 tests | All green (388 total) |

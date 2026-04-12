@@ -12,6 +12,7 @@ import logging
 from talim.app.state import TalimState
 from talim.models.position import Position
 from talim.models.signal import Signal
+from talim.metrics import METRICS
 from talim.risk.rules import RiskRules
 
 logger = logging.getLogger("talim.nodes.risk_check")
@@ -91,6 +92,17 @@ def risk_check(state: TalimState) -> TalimState:
         logger.info("risk_check: no pending_signal, passing through")
         return {}
 
+    if state.get("halted"):
+        logger.info("risk_check: halted — blocking %s %s", sig.strategy, sig.side)
+        METRICS.inc("talim_risk_blocks_total")
+        return {
+            "pending_signal": None,
+            "signal_approved": False,
+            "pending_notification": (
+                f"HALTED: blocked {sig.side} {sig.instrument} ({sig.strategy})"
+            ),
+        }
+
     positions = list(state.get("active_positions") or [])
     daily_pnl = float(state.get("daily_pnl", 0.0)) if isinstance(
         state.get("daily_pnl", 0.0), (int, float)
@@ -99,9 +111,11 @@ def risk_check(state: TalimState) -> TalimState:
     passed, reason = check_signal(sig, positions, daily_pnl, _rules)
     if passed:
         logger.info("risk_check: %s %s passed", sig.strategy, sig.side)
+        METRICS.inc("talim_signals_emitted_total")
         return {}
 
     logger.info("risk_check: blocked — %s", reason)
+    METRICS.inc("talim_risk_blocks_total")
     return {
         "pending_signal": None,
         "signal_approved": False,
