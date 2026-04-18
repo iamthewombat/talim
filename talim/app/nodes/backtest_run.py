@@ -38,6 +38,8 @@ def backtest_run(state: TalimState) -> TalimState:
                 param_variants=req.param_variants or [{}],
                 matched_dates=req.matched_dates,
                 data_dir=req.data_dir,
+                instrument=getattr(req, "instrument", "ES"),
+                timeframe=getattr(req, "timeframe", None),
             )
     except VectorbtUnsupported as e:
         logger.warning("backtest_run: vectorbt unsupported (%s); falling back", e)
@@ -46,6 +48,8 @@ def backtest_run(state: TalimState) -> TalimState:
             param_variants=req.param_variants or [{}],
             matched_dates=req.matched_dates,
             data_dir=req.data_dir,
+            instrument=getattr(req, "instrument", "ES"),
+            timeframe=getattr(req, "timeframe", None),
         )
     except Exception as e:
         logger.exception("backtest_run: engine failed: %s", e)

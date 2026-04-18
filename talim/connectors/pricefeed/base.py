@@ -34,6 +34,22 @@ class BasePriceFeed(ABC):
     def subscriptions(self) -> set[str]:
         return set(self._subscribed)
 
+    def prime_history(self, instrument: str, min_bars: int = 50) -> list[OHLCVBar]:
+        """Optionally backfill historical bars and emit them to callbacks.
+
+        Live feeds can override this to populate scanner history on demand.
+        Mocks and scaffolds can safely inherit the default no-op.
+        """
+        return []
+
+    def poll_once(self, instrument: str) -> OHLCVBar | None:
+        """Optionally fetch and emit the newest completed bar for one instrument.
+
+        Live feeds can override this to support cron-style polling. The default
+        implementation is a no-op so existing feeds remain valid.
+        """
+        return None
+
     @abstractmethod
     def connect(self) -> None:
         ...

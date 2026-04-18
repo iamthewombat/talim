@@ -1,7 +1,7 @@
 """Shared-secret auth for the Talim bridge (WP-16).
 
-NanoClaw and Talim share a single secret read from `TALIM_BRIDGE_SECRET`.
-Requests must include it as `X-Talim-Secret`. Both sides may use this helper.
+External bridge clients and Talim share a single secret read from
+`TALIM_BRIDGE_SECRET`. Requests must include it as `X-Talim-Secret`.
 """
 
 from __future__ import annotations

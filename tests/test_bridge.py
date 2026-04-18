@@ -1,12 +1,9 @@
-"""Tests for the Talim bridge API and stub NanoClaw router (WP-16)."""
+"""Tests for the Talim bridge API."""
 
 import pytest
 from fastapi.testclient import TestClient
 
 from talim.api.bridge import create_app
-from nanoclaw.router import Intent, classify_intent, route_message
-
-
 SECRET = "test-secret-shhh"
 
 
@@ -176,54 +173,6 @@ class TestTriggerEndpoint:
         assert r.status_code == 200
         assert r.json()["thread_id"] == "scan-42"
         assert fake_trigger_calls == ["scan-42"]
-
-
-# ---------------------------------------------------------------------------
-# Round-trip via NanoClaw → bridge
-# ---------------------------------------------------------------------------
-
-class TestNanoClawRouter:
-    def test_classify_local(self):
-        assert classify_intent("hi there") is Intent.LOCAL
-        assert classify_intent("how's the weather") is Intent.LOCAL
-
-    def test_classify_talim(self):
-        assert classify_intent("what's my P&L?") is Intent.TALIM
-        assert classify_intent("show me the momentum signal") is Intent.TALIM
-        assert classify_intent("run a backtest") is Intent.TALIM
-
-    def test_local_route_does_not_forward(self):
-        result = route_message("hello")
-        assert result.intent is Intent.LOCAL
-        assert result.forwarded is False
-        assert "Hello" in result.response
-
-    def test_talim_route_forwards_via_injected_http(self, client):
-        # Adapt the FastAPI test client into a callable matching requests.post.
-        class _FakeResp:
-            def __init__(self, r):
-                self._r = r
-            def raise_for_status(self):
-                self._r.raise_for_status()
-            def json(self):
-                return self._r.json()
-
-        def fake_post(url, json, headers, timeout):
-            # Strip the base — TestClient takes paths.
-            path = url.split("//", 1)[-1].split("/", 1)[-1]
-            r = client.post("/" + path, json=json, headers=headers)
-            return _FakeResp(r)
-
-        result = route_message(
-            "what's my P&L?",
-            thread_id="nc-1",
-            talim_url="http://talim",
-            secret=SECRET,
-            http_post=fake_post,
-        )
-        assert result.intent is Intent.TALIM
-        assert result.forwarded is True
-        assert result.response == "echo:what's my P&L?"
 
 
 # ---------------------------------------------------------------------------

@@ -76,6 +76,39 @@ class TestValidateConfig:
         errors = validate_config(data)
         assert any("correlation_groups" in e for e in errors)
 
+    def test_bad_margin_utilization_rejected(self):
+        data = {
+            "max_position_qty": 5.0,
+            "max_total_exposure": 100_000.0,
+            "max_daily_drawdown": -2000.0,
+            "max_correlated_positions": 1,
+            "max_margin_utilization_pct": 1.5,
+        }
+        errors = validate_config(data)
+        assert any("max_margin_utilization_pct" in e for e in errors)
+
+    def test_negative_financing_rate_rejected(self):
+        data = {
+            "max_position_qty": 5.0,
+            "max_total_exposure": 100_000.0,
+            "max_daily_drawdown": -2000.0,
+            "max_correlated_positions": 1,
+            "cfd_financing_annual_rate": -0.01,
+        }
+        errors = validate_config(data)
+        assert any("cfd_financing_annual_rate" in e for e in errors)
+
+    def test_non_boolean_session_gate_rejected(self):
+        data = {
+            "max_position_qty": 5.0,
+            "max_total_exposure": 100_000.0,
+            "max_daily_drawdown": -2000.0,
+            "max_correlated_positions": 1,
+            "enforce_cfd_session_windows": "yes",
+        }
+        errors = validate_config(data)
+        assert any("enforce_cfd_session_windows" in e for e in errors)
+
 
 class TestLoadValidatedConfig:
     def test_loads_valid_file(self, tmp_path):

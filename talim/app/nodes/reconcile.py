@@ -8,7 +8,7 @@ emits repair events for any divergences.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from talim.app.execute_context import get_execute_context
@@ -16,6 +16,7 @@ from talim.app.state import TalimState
 from talim.connectors.exchange.base import BaseExchange
 from talim.memory.episodic import EpisodicMemory
 from talim.models.position import Position
+from talim.risk.cfd import is_cfd_instrument
 
 logger = logging.getLogger("talim.nodes.reconcile")
 
@@ -38,6 +39,41 @@ class RepairEvent:
         }
 
 
+def _signed_qty(position: Position) -> float:
+    return position.qty if position.side == "long" else -position.qty
+
+
+def _normalise_positions_by_instrument(
+    positions: list[Position] | None,
+) -> dict[str, Position]:
+    """Net duplicate CFD positions into the broker's netted view."""
+    normalised: dict[str, Position] = {}
+    for position in positions or []:
+        existing = normalised.get(position.instrument)
+        if existing is None or not is_cfd_instrument(position.instrument):
+            normalised[position.instrument] = position
+            continue
+
+        total_signed = _signed_qty(existing) + _signed_qty(position)
+        if abs(total_signed) < 1e-9:
+            normalised.pop(position.instrument, None)
+            continue
+
+        normalised[position.instrument] = replace(
+            existing,
+            side="long" if total_signed > 0 else "short",
+            qty=abs(total_signed),
+            entry_price=position.entry_price or existing.entry_price,
+            stop=position.stop or existing.stop,
+            target=position.target or existing.target,
+            strategy=position.strategy or existing.strategy,
+            open_pnl=existing.open_pnl + position.open_pnl,
+            entry_time=position.entry_time or existing.entry_time,
+            position_id=position.position_id or existing.position_id,
+        )
+    return normalised
+
+
 def reconcile_positions(
     exchange: BaseExchange,
     episodic: EpisodicMemory,
@@ -51,7 +87,7 @@ def reconcile_positions(
     repairs: list[RepairEvent] = []
 
     # 1. Get what the exchange says is open
-    exchange_positions = {p.instrument: p for p in exchange.get_positions()}
+    exchange_positions = _normalise_positions_by_instrument(exchange.get_positions())
 
     # 2. Get pending decisions from episodic memory (outcome = "pending")
     pending = episodic.query_decisions()
@@ -61,9 +97,7 @@ def reconcile_positions(
             memory_pending[d["instrument"]] = d
 
     # 3. State positions (what the graph thinks is open)
-    state_map: dict[str, Position] = {}
-    for p in (state_positions or []):
-        state_map[p.instrument] = p
+    state_map = _normalise_positions_by_instrument(state_positions)
 
     # All instruments across all three sources
     all_instruments = set(exchange_positions) | set(memory_pending) | set(state_map)

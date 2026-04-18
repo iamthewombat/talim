@@ -24,7 +24,6 @@ RUN pip install --upgrade pip && \
         "pyarrow>=17.0"
 
 COPY talim ./talim
-COPY nanoclaw ./nanoclaw
 COPY strategies ./strategies
 
 EXPOSE 8000

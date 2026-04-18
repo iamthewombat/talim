@@ -54,7 +54,7 @@
 | WP | Name | Status | Session Date | Notes |
 |----|------|--------|--------------|-------|
 | WP-15 | Discord Bot Connector | `[x]` | 2026-04-07 | 19/19 tests passing (230 total) |
-| WP-16 | NanoClaw Bridge API | `[x]` | 2026-04-07 | 13/13 tests passing (243 total) |
+| WP-16 | Bridge API | `[x]` | 2026-04-07 | 13/13 tests passing (243 total) |
 | WP-17 | Risk Check Node | `[x]` | 2026-04-07 | 14/14 tests passing (257 total) |
 
 ## Phase 6: Deployment & Integration
@@ -107,6 +107,42 @@
 | WP-41 | Observability (Metrics, Logs, Alerts) | `[x]` | 2026-04-11 | 8/8 tests passing (368 total) |
 | WP-43 | Backup & Disaster Recovery | `[x]` | 2026-04-11 | 4/4 tests passing (372 total) |
 | WP-32 | Live Exchange Wiring & Testnet Soak | `[x]` | 2026-04-12 | 16/16 tests passing (388 total) |
+| WP-46 | External Assistant Deployment | `[x]` | 2026-04-12 | Removed the bundled NanoClaw stub; compose/runtime now assume an external assistant client or direct bridge caller |
+
+## Phase 9: Local-First Deployment
+
+| WP | Name | Status | Session Date | Notes |
+|----|------|--------|--------------|-------|
+| WP-47 | Portable Local Deployment & VPS Migration Layout | `[ ]` | — | Make the laptop stack portable: bind-mounted state, host-agnostic config, restore/migration runbook for later VPS move |
+
+## Phase 10: Broker-Agnostic CFD Core (IG-First)
+
+| WP | Name | Status | Session Date | Notes |
+|----|------|--------|--------------|-------|
+| WP-48 | CFD Venue Contract and Instrument Registry | `[x]` | 2026-04-12 | Added canonical CFD spec/venue capability models, JSON registry, and registry loader/tests for AU200 cash/fwd instruments |
+| WP-49 | IG AU Feasibility and Market Discovery | `[x]` | 2026-04-12 | Verified IG demo auth and discovered initial AU200 mappings: cash `IX.D.ASX.IFT.IP` and forward `IX.D.ASX.FWM2.IP`; some contract metadata remains to be filled during adapter work |
+| WP-50 | IG Exchange Adapter | `[x]` | 2026-04-12 | Added `IgExchange`, confirm/deal-id handling, canonical-instrument mapping, factory wiring, and mocked execution tests for market + working orders |
+| WP-51 | CFD Market Data Pipeline (IG-First) | `[x]` | 2026-04-13 | Added `IgPriceFeed`, snapshot-to-bar builder, scanner polling hooks, price-feed factory, and IG historical ingestion to Parquet |
+| WP-52 | CFD Risk, P&L, and Session Model | `[x]` | 2026-04-13 | Added CFD-aware margin/session checks, financing-aware P&L snapshots, AU200 point-value metadata, and netted CFD reconciliation |
+| WP-53 | AU200 Strategy Package and IG Demo Soak | `[x]` | 2026-04-13 | Added `momentum-AU200`, timeframe-aware backtests/datasets, IG dataset build/runbook scripts, and recorded the first AU200 baseline backtest on IG demo data |
+
+## Phase 11: Prediction Market Venue Enablement
+
+| WP | Name | Status | Session Date | Notes |
+|----|------|--------|--------------|-------|
+| WP-54 | Polymarket Feasibility, Compliance, and Product Fit Gate | `[ ]` | — | Confirm whether Polymarket is usable for the intended jurisdiction/use case before building a connector |
+| WP-55 | Polymarket Wallet Auth and Exchange Connector | `[ ]` | — | Implement signed auth, order placement, balances, fills, and position retrieval for the Polymarket CLOB |
+| WP-56 | Polymarket Market Data and WebSocket Feed | `[ ]` | — | Add market discovery plus live orderbook/trade snapshot ingestion for event markets |
+| WP-57 | Prediction Market Position, Risk, and Settlement Model | `[ ]` | — | Model capped payout, collateral, liquidity, settlement, and event concentration risk |
+| WP-58 | Event-Driven Strategy and Backtest Framework | `[ ]` | — | Add replay/backtest support and baseline strategies for probability-driven event markets |
+
+## Phase 12: Second CFD Venue Portability
+
+| WP | Name | Status | Session Date | Notes |
+|----|------|--------|--------------|-------|
+| WP-59 | FOREX.com AU Feasibility and Market Mapping | `[ ]` | — | Verify whether the canonical CFD model carries cleanly into FOREX.com AU and document any gaps |
+| WP-60 | FOREX.com Exchange and Price Feed Adapters | `[ ]` | — | Implement FOREX.com on top of the broker-neutral CFD interfaces rather than as a parallel stack |
+| WP-61 | Multi-Broker CFD Conformance and Demo Regression | `[ ]` | — | Prove the same Talim CFD flow works across IG and FOREX.com adapters with shared tests and demo runbooks |
 
 ---
 
@@ -129,9 +165,9 @@
 | 2026-04-07 | WP-13 | LLMClient (Claude+Ollama), prompt templates, MockLLMClient, fallback paths, 15 tests | All green (194 total) |
 | 2026-04-07 | WP-14 | converse/strategy_update/notify nodes, llm_context DI, JSON proposal parsing, 17 tests | All green (211 total) |
 | 2026-04-07 | WP-15 | Discord connector: embed formatter, ReactionHandler, TalimDiscordBot wrapper, 19 tests | All green (230 total) |
-| 2026-04-07 | WP-16 | FastAPI bridge (/talim/converse, /talim/resume), shared-secret auth, NanoClaw stub router, 13 tests | All green (243 total) |
+| 2026-04-07 | WP-16 | FastAPI bridge (/talim/converse, /talim/resume), shared-secret auth, 13 tests | All green (243 total) |
 | 2026-04-07 | WP-17 | risk_check node + RiskRules (qty/exposure/dd/correlation), JSON loader, blocks routed through notify, 14 tests | All green (257 total) |
-| 2026-04-07 | WP-18 | Dockerfile, nanoclaw Dockerfile, docker-compose (redis/talim/nanoclaw/nginx), nginx.conf, healthcheck.sh, .env.example, cron.txt | 8 file-shape tests |
+| 2026-04-07 | WP-18 | Dockerfile, docker-compose (redis/talim/scheduler/nginx), nginx.conf, healthcheck.sh, .env.example, cron.txt | 8 file-shape tests |
 | 2026-04-07 | WP-19 | Full simulated market day e2e: scan→signal→risk→HITL→resume→fill→bridge Q&A→strategy update→backtest→memory | 266 total tests green |
 | 2026-04-11 | WP-34 | Position monitor node: _check_exit for long/short stops+targets, wired between scanner→router in graph, 17 tests | All green (319 total) |
 | 2026-04-11 | WP-35 | Reconcile node: reconcile_positions diffs exchange vs memory vs state, RepairEvent, surfaces divergences via pending_notification, 11 tests | All green (330 total) |
@@ -141,3 +177,9 @@
 | 2026-04-11 | WP-41 | JSONFormatter structured logging, METRICS singleton (counters+gauges), /metrics Prometheus endpoint, risk_check+execute instrumented, ops/grafana/talim.json dashboard, 8 tests | All green (368 total) |
 | 2026-04-11 | WP-43 | scripts/backup.sh (sqlite3 .backup + optional S3 upload + 7-day prune), cron entries (hourly + daily), Redis AOF enabled, docs/disaster-recovery.md runbook, 4 tests | All green (372 total) |
 | 2026-04-12 | WP-32 | Exchange factory (mock/testnet/live), CcxtExchange mocked integration tests (order/position/balance/cancel), docs/exchange-setup.md runbook + soak checklist, 16 tests | All green (388 total) |
+| 2026-04-12 | WP-46 | Removed the bundled NanoClaw stub container/package, kept the bridge API intact, updated compose/docs/tests to treat assistant integration as external | Targeted tests green |
+| 2026-04-12 | WP-48, WP-49 | Added canonical CFD spec/registry package, AU200 cash/fwd registry config, IG market discovery client + CLI, verified demo auth, and resolved initial AU200 IG epics | 25 targeted tests green plus live demo discovery; remaining contract details will land in WP-50/WP-52 |
+| 2026-04-12 | WP-50 | Added the first real IG OTC exchange adapter, wired `create_exchange(..., exchange_name=\"ig\")`, and covered market/limit/cancel/balance/positions with mocked tests | 32 targeted tests green |
+| 2026-04-13 | WP-51 | Added IG REST price feed, local snapshot bar builder, scanner polling/backfill hooks, price-feed factory, and Parquet ingestion CLI; verified against IG demo bars | 33 feed/scanner tests green plus live AU200 bar fetch |
+| 2026-04-13 | WP-52 | Added CFD session gating, point-value exposure/margin checks, financing-aware `PnLSnapshot`, account-currency selection, and netted CFD reconciliation normalisation | 102 targeted/regression tests green |
+| 2026-04-13 | WP-53 | Added `momentum-AU200`, timeframe-aware backtest inputs, AU200 dataset/backtest CLIs, demo soak docs, and ran the first AU200 baseline backtest on live IG demo historical data | 88 strategy/backtest tests green plus IG dataset build and baseline backtest run |

@@ -1,4 +1,4 @@
-"""Exchange factory — selects mock/testnet/live based on config (WP-32).
+"""Exchange factory — selects mock/testnet/live based on config (WP-32/WP-50).
 
 Usage at startup:
 
@@ -6,8 +6,8 @@ Usage at startup:
 
 Modes:
     mock     — MockExchange (default, no credentials needed)
-    testnet  — CcxtExchange with sandbox=True
-    live     — CcxtExchange with sandbox=False
+    testnet  — CcxtExchange sandbox or IG demo
+    live     — CcxtExchange production or IG live
 """
 
 from __future__ import annotations
@@ -57,6 +57,15 @@ def create_exchange(
         raise ExchangeConfigError(
             f"TALIM_EXCHANGE_NAME required for mode={mode}"
         )
+
+    if exchange_name.lower() == "ig":
+        try:
+            from talim.connectors.exchange.ig_exchange import IgExchange
+            environment = "demo" if mode == "testnet" else "live"
+            logger.info("exchange factory: using IgExchange(environment=%s)", environment)
+            return IgExchange.from_env(environment=environment)
+        except (ValueError, RuntimeError) as e:
+            raise ExchangeConfigError(str(e)) from e
 
     from talim.security.vault import Vault, VaultError
 

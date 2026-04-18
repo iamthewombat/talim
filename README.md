@@ -14,8 +14,8 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
         │                           │   │                           │
         │  ▸ Databento / Tardis     │   │  ▸ Exchange (ccxt: orders)│
         │  ▸ Binance / IBKR feed    │   │  ▸ Discord (embeds + rx)  │
-        │  ▸ Discord reactions      │   │  ▸ NanoClaw replies       │
-        │  ▸ NanoClaw messages      │   │  ▸ Episodic journal       │
+        │  ▸ Discord reactions      │   │  ▸ Bridge client replies  │
+        │  ▸ Bridge client messages │   │  ▸ Episodic journal       │
         │  ▸ Claude / Ollama APIs   │   │                           │
         └─────────────┬─────────────┘   └─────────────▲─────────────┘
                       │                               │
@@ -94,12 +94,12 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
          │                           │                         │
          ▼                           ▼                         ▼
 ┌─────────────────┐         ┌─────────────────┐       ┌────────────────────┐
-│ MEMORY (SQLite) │         │ REDIS CONTAINER │       │  NANOCLAW          │
-│                 │         │                 │       │  CONTAINER         │
+│ MEMORY (SQLite) │         │ REDIS CONTAINER │       │ EXTERNAL ASSISTANT │
+│                 │         │                 │       │    CLIENT(S)       │
 │ ▸ episodic.db   │         │ ▸ Streams       │       │                    │
-│   (decisions)   │         │ ▸ Consumer grps │       │  ▸ Intent router   │
-│ ▸ pattern.db    │         │ ▸ AOF durable   │       │  ▸ Forwards trade  │
-│   (fingerprints)│         │                 │       │    Qs to bridge    │
+│   (decisions)   │         │ ▸ Consumer grps │       │  ▸ OpenClaw        │
+│ ▸ pattern.db    │         │ ▸ AOF durable   │       │  ▸ Direct bridge   │
+│   (fingerprints)│         │                 │       │    callers         │
 │ ▸ working.db    │         └─────────────────┘       │  ▸ Shared secret   │
 │   (SqliteSaver  │                                   │                    │
 │    checkpoints) │                                   └────────────────────┘
@@ -118,14 +118,14 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
                       │   talim-nginx · nginx:alpine│
                       └──────┬───────────────┬──────┘
                              │               │
-                    /talim/* │               │ (future: /nanoclaw/*)
-                             ▼               ▼
-                  ┌──────────────────┐ ┌───────────────────┐
-                  │      talim       │ │     nanoclaw      │
-                  │   talim-app      │ │  talim-nanoclaw   │
-                  │   :8000 (uvicorn)│ │   (stub today)    │
-                  │   healthcheck ✓  │ │                   │
-                  └──────┬───────────┘ └───────────────────┘
+                    /talim/* │
+                             ▼
+                  ┌──────────────────┐
+                  │      talim       │
+                  │   talim-app      │
+                  │   :8000 (uvicorn)│
+                  │   healthcheck ✓  │
+                  └──────┬───────────┘
                          │
               ┌──────────┼──────────┐
               ▼          ▼          ▼
@@ -193,6 +193,7 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 |----------|-------|------|--------|
 | **momentum-ES** | EMA(8) / EMA(21) crossover | 1.5× ATR | 3.0× ATR |
 | **mean-reversion-ES** | Bollinger Band (20, 2σ) reversion | 2.0× ATR | 1.5× ATR |
+| **momentum-AU200** | EMA(13) / EMA(34) crossover with ATR gap filter | 1.6× ATR | 2.8× ATR |
 
 ### Memory (`talim/memory/`)
 - **EpisodicMemory** — decision journal (signals, approvals, fills, outcomes)
@@ -204,7 +205,7 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 - `BarEvent`, `RegimeChangeEvent`, `SignalEvent`, `TradeEvent`
 
 ### Connectors (`talim/connectors/`)
-- **Price feeds:** `BasePriceFeed`, `MockPriceFeed` (DataFrame/Parquet/CSV replay), Binance ccxt.pro scaffold, normaliser
+- **Price feeds:** `BasePriceFeed`, `MockPriceFeed` (DataFrame/Parquet/CSV replay), Binance ccxt.pro scaffold, IG CFD REST feed, normalisers, price-feed factory
 - **Exchanges:** `BaseExchange`, `MockExchange` (in-memory fills + position tracking with flip/partial-close), `CcxtExchange`, env credential loader
 - **Discord:** rich-embed formatter (signals/backtests/regimes/log), `ReactionHandler` mapping ✅/❌ to HITL resume, `TalimDiscordBot` discord.py shell
 
@@ -261,10 +262,10 @@ Thin wrappers exposed over an MCP stdio server: `get_positions`, `get_pnl`, `run
 ### Bridge API (`talim/api/`)
 - FastAPI app with `POST /talim/converse` and `POST /talim/resume`
 - `X-Talim-Secret` shared-secret auth (constant-time compare)
-- Stub `nanoclaw/router.py` that classifies an incoming message and forwards trading questions to the bridge
+- External assistant clients (for example OpenClaw or a direct caller) can forward trading requests to the bridge using the shared secret
 
 ### Deployment (`Dockerfile`, `docker-compose.yml`, `nginx/`, `scripts/`)
-- Four-service compose stack: `redis`, `talim`, `nanoclaw`, `nginx`
+- Four-service compose stack: `redis`, `talim`, `scheduler`, `nginx`
 - Talim image runs `uvicorn talim.api.bridge:create_app --factory`
 - Nginx reverse proxy with optional TLS
 - `scripts/healthcheck.sh` verifies all services
@@ -293,8 +294,8 @@ talim/
 └── strategy/        # BaseStrategy, loader, markdown store
 strategies/
 ├── momentum-ES/
+├── momentum-AU200/
 └── mean-reversion-ES/
-nanoclaw/            # Stub intent router that forwards to the bridge
 tests/
 ├── e2e/test_market_day.py   # Full simulated market day
 └── test_*.py                # 16 unit/integration files (266 tests)

@@ -63,6 +63,8 @@ def _make_signal() -> Signal:
 def _make_backtest_request() -> BacktestRequest:
     return BacktestRequest(
         strategy_name="momentum-ES",
+        instrument="AU200.cash",
+        timeframe="1h",
         param_variants=[{"ema_fast": 8, "ema_slow": 21}],
         matched_dates=[date(2025, 3, 10), date(2025, 4, 22)],
         data_dir="data/es",
@@ -176,6 +178,8 @@ class TestBacktestRequest:
     def test_instantiation(self):
         req = _make_backtest_request()
         assert req.strategy_name == "momentum-ES"
+        assert req.instrument == "AU200.cash"
+        assert req.timeframe == "1h"
         assert len(req.matched_dates) == 2
 
     def test_roundtrip(self):
@@ -183,6 +187,8 @@ class TestBacktestRequest:
         d = req.to_dict()
         restored = BacktestRequest.from_dict(d)
         assert restored.strategy_name == req.strategy_name
+        assert restored.instrument == req.instrument
+        assert restored.timeframe == req.timeframe
         assert restored.matched_dates == req.matched_dates
         assert restored.param_variants == req.param_variants
 

@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from talim.connectors.exchange.mock_exchange import MockExchange
+from talim.models.position import Position
 from talim.risk.pnl_tracker import PnLTracker, PnLSnapshot
+
+
+class _StaticExchange:
+    def __init__(self, *, balances: dict[str, float], positions: list[Position]) -> None:
+        self._balances = balances
+        self._positions = positions
+
+    def get_account_balance(self) -> dict[str, float]:
+        return dict(self._balances)
+
+    def get_positions(self) -> list[Position]:
+        return list(self._positions)
 
 
 def _exchange_with_position() -> MockExchange:
@@ -28,6 +42,7 @@ class TestPnLSnapshot:
         assert d["open_pnl"] == 100.0
         assert d["daily_pnl"] == 50.0
         assert d["position_count"] == 1
+        assert d["account_currency"] == ""
 
 
 class TestPnLTracker:
@@ -138,3 +153,55 @@ class TestPnLTracker:
         snap = tracker.refresh(ex)
         assert "-05:00" in snap.timestamp
         assert snap.account_balance == 50_000.0
+
+    def test_prefers_cfd_quote_currency_when_multiple_balances_present(self):
+        position = Position(
+            instrument="AU200.cash",
+            side="long",
+            qty=1.0,
+            entry_price=9000.0,
+            stop=8950.0,
+            target=9075.0,
+            strategy="momentum-AU200",
+            open_pnl=125.0,
+        )
+        exchange = _StaticExchange(
+            balances={"USD": 10_000.0, "AUD": 15_000.0},
+            positions=[position],
+        )
+        tracker = PnLTracker()
+        snap = tracker.refresh(exchange, now=datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc))
+
+        assert snap.account_currency == "AUD"
+        assert snap.account_balance == 15_000.0
+        assert snap.open_pnl == 125.0
+
+    def test_estimates_financing_for_overnight_cash_cfd(self):
+        now = datetime(2026, 4, 15, 2, 0, tzinfo=timezone.utc)
+        entry_time = now - timedelta(days=2)
+        position = Position(
+            instrument="AU200.cash",
+            side="long",
+            qty=1.0,
+            entry_price=9000.0,
+            stop=8950.0,
+            target=9075.0,
+            strategy="momentum-AU200",
+            open_pnl=100.0,
+            entry_time=entry_time,
+        )
+        exchange = _StaticExchange(
+            balances={"AUD": 100_000.0},
+            positions=[position],
+        )
+        tracker = PnLTracker(
+            session_tz=ZoneInfo("Australia/Sydney"),
+            financing_annual_rate=0.10,
+        )
+        snap = tracker.refresh(exchange, now=now)
+
+        expected_financing = 9000.0 * 0.10 / 365.0 * 2
+        assert snap.gross_open_pnl == 100.0
+        assert snap.financing_cost == expected_financing
+        assert snap.open_pnl == snap.gross_open_pnl - expected_financing
+        assert snap.margin_in_use == 450.0

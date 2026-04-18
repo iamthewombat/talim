@@ -4,7 +4,7 @@ Verified 2026-04-07. Stack brought up via `docker compose up --build -d`; health
 
 | # | Criterion | Verified | Evidence |
 |---|-----------|----------|----------|
-| 1 | Start stack with `docker compose up` | ✅ | `docker compose ps` shows redis (healthy), talim (healthy), nanoclaw (up), nginx (up). `./scripts/healthcheck.sh` → "All services healthy." |
+| 1 | Start stack with `docker compose up` | ✅ | `docker compose ps` shows redis (healthy), talim (healthy), scheduler (up), nginx (up). `./scripts/healthcheck.sh` → "All services healthy." |
 | 2 | Replay historical bars, detect regimes, fire signals | ✅ | `tests/e2e/test_market_day.py::test_full_market_day` replays bars through MockPriceFeed → scanner → fingerprint/classifier → strategy `on_bar` → Signal emitted. |
 | 3 | Receive trade alert in Discord with context | ✅ | `tests/test_discord.py::TestFormatter` covers embed formatting (regime + risk/reward); `tests/e2e/test_market_day.py` registers a Discord-style reaction handler against the formatted embed. |
 | 4 | React with checkmark, see MockExchange log fill | ✅ | `tests/e2e/test_market_day.py::test_full_market_day` and `tests/test_execute_node.py::test_execute_places_order_and_records_decision` — reaction → resume_graph → execute node → MockExchange.place_order. |
@@ -18,7 +18,7 @@ Verified 2026-04-07. Stack brought up via `docker compose up --build -d`; health
 NAME             SERVICE    STATUS
 talim-redis      redis      Up (healthy)
 talim-app        talim      Up (healthy)
-talim-nanoclaw   nanoclaw   Up
+talim-scheduler  scheduler  Up
 talim-nginx      nginx      Up   0.0.0.0:8080->80
 ```
 
@@ -28,6 +28,5 @@ talim-nginx      nginx      Up   0.0.0.0:8080->80
 OK:   redis ping
 OK:   bridge /health via nginx
 OK:   bridge /talim/health direct
-OK:   nanoclaw running
 All services healthy.
 ```

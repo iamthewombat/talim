@@ -9,6 +9,8 @@ class BacktestRequest:
     """Request to run a backtest for a strategy."""
 
     strategy_name: str
+    instrument: str = "ES"
+    timeframe: str | None = None
     param_variants: list[dict] = field(default_factory=list)
     matched_dates: list[date] = field(default_factory=list)
     data_dir: str = "data"

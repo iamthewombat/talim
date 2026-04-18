@@ -4,12 +4,23 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pandas as pd
 import pytest
 
+from talim.cfd import load_default_registry
+from talim.connectors.exchange.ig_discovery import IgCredentials
+from talim.connectors.pricefeed.factory import PriceFeedConfigError, create_pricefeed
+from talim.connectors.pricefeed.ig import IgPriceFeed
 from talim.connectors.pricefeed.mock import MockPriceFeed
-from talim.connectors.pricefeed.normaliser import normalise_binance_kline
+from talim.connectors.pricefeed.normaliser import (
+    PriceSnapshot,
+    SnapshotBarBuilder,
+    normalise_binance_kline,
+    normalise_ig_price_bar,
+    normalise_ig_snapshot,
+)
 from talim.models.bar import OHLCVBar
 
 
@@ -28,6 +39,14 @@ def _make_ohlcv_df(n: int = 200) -> pd.DataFrame:
         "close": close,
         "volume": rng.uniform(5000, 15000, n),
     })
+
+
+def _mock_http_client(handler):
+    transport = httpx.MockTransport(handler)
+    return httpx.Client(
+        transport=transport,
+        base_url="https://demo-api.ig.com/gateway/deal",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +179,198 @@ class TestNormaliser:
         kline = [1700000000000, "1", "2", "0.5", "1.5", "10"]
         bar = normalise_binance_kline(kline, instrument="X")
         assert bar.timestamp.tzinfo is not None
+
+    def test_ig_price_bar_midpoint_normaliser(self):
+        payload = {
+            "snapshotTimeUTC": "2026-04-13T09:30:00",
+            "openPrice": {"bid": 100.0, "ask": 102.0, "lastTraded": None},
+            "highPrice": {"bid": 104.0, "ask": 106.0, "lastTraded": None},
+            "lowPrice": {"bid": 99.0, "ask": 101.0, "lastTraded": None},
+            "closePrice": {"bid": 103.0, "ask": 105.0, "lastTraded": None},
+            "lastTradedVolume": 12,
+        }
+        bar = normalise_ig_price_bar(payload, instrument="AU200.cash", timeframe="5m")
+        assert bar.open == 101.0
+        assert bar.high == 105.0
+        assert bar.low == 100.0
+        assert bar.close == 104.0
+        assert bar.volume == 12.0
+
+    def test_ig_market_snapshot_normaliser(self):
+        payload = {"snapshot": {"bid": 100.0, "offer": 102.0}}
+        snapshot = normalise_ig_snapshot(
+            payload,
+            instrument="AU200.cash",
+            timestamp=datetime(2026, 4, 13, 9, 30, tzinfo=timezone.utc),
+        )
+        assert snapshot.instrument == "AU200.cash"
+        assert snapshot.mid == 101.0
+
+
+class TestSnapshotBarBuilder:
+    def test_builder_rolls_snapshots_into_bars(self):
+        builder = SnapshotBarBuilder(timeframe="5m")
+        first = PriceSnapshot(
+            instrument="AU200.cash",
+            timestamp=datetime(2026, 4, 13, 9, 30, tzinfo=timezone.utc),
+            bid=100.0,
+            ask=102.0,
+            volume=1.0,
+        )
+        second = PriceSnapshot(
+            instrument="AU200.cash",
+            timestamp=datetime(2026, 4, 13, 9, 34, tzinfo=timezone.utc),
+            bid=103.0,
+            ask=105.0,
+            volume=2.0,
+        )
+        third = PriceSnapshot(
+            instrument="AU200.cash",
+            timestamp=datetime(2026, 4, 13, 9, 35, tzinfo=timezone.utc),
+            bid=101.0,
+            ask=103.0,
+            volume=3.0,
+        )
+        assert builder.ingest(first) is None
+        assert builder.ingest(second) is None
+        completed = builder.ingest(third)
+        assert completed is not None
+        assert completed.timestamp == datetime(2026, 4, 13, 9, 30, tzinfo=timezone.utc)
+        assert completed.open == 101.0
+        assert completed.high == 104.0
+        assert completed.low == 101.0
+        assert completed.close == 104.0
+        assert completed.volume == 3.0
+
+
+class TestIgPriceFeed:
+    @staticmethod
+    def _creds() -> IgCredentials:
+        return IgCredentials(api_key="api-key", cst="cst", security_token="sec")
+
+    def test_fetch_bars_and_poll_once(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/gateway/deal/prices/IX.D.ASX.IFT.IP":
+                assert request.url.params["resolution"] == "MINUTE_5"
+                max_size = int(request.url.params["max"])
+                prices = [
+                    {
+                        "snapshotTimeUTC": "2026-04-13T09:30:00",
+                        "openPrice": {"bid": 100.0, "ask": 102.0, "lastTraded": None},
+                        "highPrice": {"bid": 104.0, "ask": 106.0, "lastTraded": None},
+                        "lowPrice": {"bid": 99.0, "ask": 101.0, "lastTraded": None},
+                        "closePrice": {"bid": 103.0, "ask": 105.0, "lastTraded": None},
+                        "lastTradedVolume": 10,
+                    },
+                    {
+                        "snapshotTimeUTC": "2026-04-13T09:35:00",
+                        "openPrice": {"bid": 106.0, "ask": 108.0, "lastTraded": None},
+                        "highPrice": {"bid": 107.0, "ask": 109.0, "lastTraded": None},
+                        "lowPrice": {"bid": 105.0, "ask": 107.0, "lastTraded": None},
+                        "closePrice": {"bid": 106.5, "ask": 108.5, "lastTraded": None},
+                        "lastTradedVolume": 8,
+                    },
+                ]
+                return httpx.Response(200, json={"prices": prices[-max_size:]})
+            raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+        feed = IgPriceFeed(
+            self._creds(),
+            timeframe="5m",
+            registry=load_default_registry(),
+            client=_mock_http_client(handler),
+        )
+        feed.subscribe("AU200.cash")
+        received: list[OHLCVBar] = []
+        feed.on_bar(received.append)
+
+        bars = feed.fetch_bars("AU200.cash", page_size=2)
+        assert len(bars) == 2
+        assert bars[0].instrument == "AU200.cash"
+
+        primed = feed.prime_history("AU200.cash", min_bars=2)
+        assert len(primed) == 2
+        assert len(received) == 2
+
+        assert feed.poll_once("AU200.cash") is None  # newest bar already emitted
+
+    def test_poll_snapshot_once_uses_builder(self):
+        calls = {"markets": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/gateway/deal/markets/IX.D.ASX.IFT.IP":
+                calls["markets"] += 1
+                if calls["markets"] == 1:
+                    update = "09:30:00"
+                    bid, offer = 100.0, 102.0
+                else:
+                    update = "09:35:00"
+                    bid, offer = 104.0, 106.0
+                return httpx.Response(200, json={"snapshot": {"bid": bid, "offer": offer, "updateTime": update}})
+            raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+        feed = IgPriceFeed(
+            self._creds(),
+            timeframe="5m",
+            registry=load_default_registry(),
+            client=_mock_http_client(handler),
+        )
+        feed.subscribe("AU200.cash")
+
+        assert feed.poll_snapshot_once("AU200.cash") is None
+        bar = feed.poll_snapshot_once("AU200.cash")
+        assert bar is not None
+        assert bar.instrument == "AU200.cash"
+        assert bar.timestamp.minute == 30
+
+    def test_fetch_recent_bars_walks_latest_pages(self):
+        def _bar_payload(ts: str, mid: float) -> dict:
+            return {
+                "snapshotTimeUTC": ts,
+                "openPrice": {"bid": mid - 1.0, "ask": mid + 1.0, "lastTraded": None},
+                "highPrice": {"bid": mid + 1.0, "ask": mid + 3.0, "lastTraded": None},
+                "lowPrice": {"bid": mid - 2.0, "ask": mid, "lastTraded": None},
+                "closePrice": {"bid": mid, "ask": mid + 2.0, "lastTraded": None},
+                "lastTradedVolume": 5,
+            }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path != "/gateway/deal/prices/IX.D.ASX.IFT.IP/MINUTE_5/5":
+                raise AssertionError(f"unexpected request: {request.method} {request.url}")
+            return httpx.Response(
+                200,
+                json={
+                    "prices": [
+                        _bar_payload("2026-04-01T09:35:00", 101.0),
+                        _bar_payload("2026-04-01T09:40:00", 102.0),
+                        _bar_payload("2026-04-01T09:45:00", 103.0),
+                        _bar_payload("2026-04-01T09:50:00", 104.0),
+                        _bar_payload("2026-04-01T09:55:00", 105.0),
+                    ]
+                },
+            )
+
+        feed = IgPriceFeed(
+            self._creds(),
+            timeframe="5m",
+            registry=load_default_registry(),
+            client=_mock_http_client(handler),
+        )
+        bars = feed.fetch_recent_bars("AU200.cash", total_bars=5, page_size=2)
+        assert len(bars) == 5
+        assert bars[0].timestamp.minute == 35
+        assert bars[-1].timestamp.minute == 55
+
+
+class TestPriceFeedFactory:
+    def test_invalid_pricefeed_raises(self):
+        with pytest.raises(PriceFeedConfigError):
+            create_pricefeed("nope")
+
+    def test_factory_creates_ig_feed(self, monkeypatch):
+        monkeypatch.setenv("IG_DEMO_API_KEY", "demo-api-key")
+        monkeypatch.setenv("IG_DEMO_LOGIN", "demo-user")
+        monkeypatch.setenv("IG_DEMO_PASSWORD", "demo-pass")
+        feed = create_pricefeed("ig", timeframe="5m")
+        assert isinstance(feed, IgPriceFeed)
+        assert feed.credentials.environment == "demo"

@@ -47,6 +47,27 @@ def validate_config(data: dict) -> list[str]:
         if not isinstance(v, int) or v < 0:
             errors.append(f"max_correlated_positions must be a non-negative int, got {v!r}")
 
+    if "max_margin_utilization_pct" in data:
+        v = data["max_margin_utilization_pct"]
+        if not isinstance(v, (int, float)) or not (0 < v <= 1):
+            errors.append(
+                f"max_margin_utilization_pct must be a number in (0, 1], got {v!r}"
+            )
+
+    if "cfd_financing_annual_rate" in data:
+        v = data["cfd_financing_annual_rate"]
+        if not isinstance(v, (int, float)) or v < 0:
+            errors.append(
+                f"cfd_financing_annual_rate must be a non-negative number, got {v!r}"
+            )
+
+    if "enforce_cfd_session_windows" in data:
+        v = data["enforce_cfd_session_windows"]
+        if not isinstance(v, bool):
+            errors.append(
+                f"enforce_cfd_session_windows must be a bool, got {v!r}"
+            )
+
     if "correlation_groups" in data:
         v = data["correlation_groups"]
         if not isinstance(v, list):

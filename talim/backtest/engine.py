@@ -86,6 +86,7 @@ def run_backtest(
     matched_dates: list[date] | None = None,
     data_dir: str | Path = "data",
     instrument: str = "ES",
+    timeframe: str | None = None,
     df: pd.DataFrame | None = None,
 ) -> list[BacktestResult]:
     """Run a backtest for `strategy_name` across one or more parameter variants.
@@ -104,7 +105,12 @@ def run_backtest(
     if df is not None:
         data = load_dataframe(df)
     else:
-        data = load_ohlcv(data_dir, instrument, matched_dates=matched_dates)
+        data = load_ohlcv(
+            data_dir,
+            instrument,
+            matched_dates=matched_dates,
+            timeframe=timeframe,
+        )
 
     variants = param_variants or [{}]
     results: list[BacktestResult] = []

@@ -29,6 +29,9 @@ class RiskRules:
     max_total_exposure: float = 100_000.0   # sum(|qty * entry_price|) cap
     max_daily_drawdown: float = -2_000.0    # negative number
     max_correlated_positions: int = 1       # incl. the pending one
+    max_margin_utilization_pct: float = 1.0
+    cfd_financing_annual_rate: float = 0.08
+    enforce_cfd_session_windows: bool = True
     block_on_existing_same_instrument: bool = True
     correlation_groups: list[set[str]] = field(default_factory=lambda: [set(g) for g in CORRELATION_GROUPS])
 

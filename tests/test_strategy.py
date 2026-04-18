@@ -19,9 +19,15 @@ from talim.strategy.store import StrategyStore
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_bar(close: float, idx: int = 0, high_delta: float = 5.0, low_delta: float = 5.0) -> OHLCVBar:
+def _make_bar(
+    close: float,
+    idx: int = 0,
+    high_delta: float = 5.0,
+    low_delta: float = 5.0,
+    instrument: str = "ES",
+) -> OHLCVBar:
     return OHLCVBar(
-        instrument="ES",
+        instrument=instrument,
         timestamp=datetime(2025, 6, 15, 9, 30) + timedelta(minutes=idx),
         open=close - 1,
         high=close + high_delta,
@@ -57,6 +63,26 @@ def _make_range_bound_bars(n: int = 100) -> list[OHLCVBar]:
     return bars
 
 
+def _make_au200_trend_bars(n: int = 120) -> list[OHLCVBar]:
+    bars = []
+    price = 8900.0
+    for i in range(n):
+        if i < 70:
+            price += 4.0
+        else:
+            price -= 5.0
+        bars.append(
+            _make_bar(
+                price,
+                idx=i,
+                high_delta=8.0,
+                low_delta=8.0,
+                instrument="AU200.cash",
+            )
+        )
+    return bars
+
+
 # ---------------------------------------------------------------------------
 # Loader tests
 # ---------------------------------------------------------------------------
@@ -71,6 +97,11 @@ class TestLoader:
         strategy = load_strategy("mean-reversion-ES")
         assert isinstance(strategy, BaseStrategy)
         assert strategy.name == "mean-reversion-ES"
+
+    def test_load_momentum_au200(self):
+        strategy = load_strategy("momentum-AU200")
+        assert isinstance(strategy, BaseStrategy)
+        assert strategy.name == "momentum-AU200"
 
     def test_load_nonexistent_raises(self):
         with pytest.raises(FileNotFoundError):
@@ -87,12 +118,19 @@ class TestStrategyStore:
         names = store.list_strategies()
         assert "momentum-ES" in names
         assert "mean-reversion-ES" in names
+        assert "momentum-AU200" in names
 
     def test_read_strategy(self):
         store = StrategyStore()
         content = store.read("momentum-ES")
         assert "momentum-ES" in content
         assert "EMA" in content
+
+    def test_read_au200_strategy(self):
+        store = StrategyStore()
+        content = store.read("momentum-AU200")
+        assert "momentum-AU200" in content
+        assert "Australia 200" in content
 
     def test_read_nonexistent_raises(self):
         store = StrategyStore()
@@ -195,6 +233,32 @@ class TestMeanReversionES:
         assert strategy.bb_std == 1.5
 
 
+class TestMomentumAU200:
+    def test_generates_signals(self):
+        strategy = load_strategy("momentum-AU200")
+        bars = _make_au200_trend_bars(120)
+        signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
+        assert len(signals) > 0
+
+    def test_signal_is_valid(self):
+        strategy = load_strategy("momentum-AU200")
+        bars = _make_au200_trend_bars(120)
+        signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
+        for sig in signals:
+            assert isinstance(sig, Signal)
+            assert sig.instrument == "AU200.cash"
+            assert sig.strategy == "momentum-AU200"
+            assert sig.side in ("long", "short")
+            assert sig.stop > 0
+            assert sig.target > 0
+
+    def test_load_params(self):
+        strategy = load_strategy("momentum-AU200")
+        strategy.load_params({"ema_fast_period": 10, "ema_slow_period": 30})
+        assert strategy.ema_fast_period == 10
+        assert strategy.ema_slow_period == 30
+
+
 # ---------------------------------------------------------------------------
 # Parity test — on_bar signature is identical across strategies
 # ---------------------------------------------------------------------------
@@ -203,27 +267,34 @@ class TestParity:
     def test_on_bar_signature_matches(self):
         momentum = load_strategy("momentum-ES")
         mean_rev = load_strategy("mean-reversion-ES")
+        au200 = load_strategy("momentum-AU200")
 
         sig_mom = inspect.signature(momentum.on_bar)
         sig_mr = inspect.signature(mean_rev.on_bar)
+        sig_au200 = inspect.signature(au200.on_bar)
 
         # Both should accept (self, bar: OHLCVBar) -> Signal | None
         mom_params = list(sig_mom.parameters.keys())
         mr_params = list(sig_mr.parameters.keys())
+        au200_params = list(sig_au200.parameters.keys())
         assert mom_params == mr_params
+        assert mom_params == au200_params
 
     def test_both_accept_same_bar(self):
         """Both strategies can process the exact same bar without error."""
         momentum = load_strategy("momentum-ES")
         mean_rev = load_strategy("mean-reversion-ES")
+        au200 = load_strategy("momentum-AU200")
         bar = _make_bar(5000.0)
 
         # Should not raise
         r1 = momentum.on_bar(bar)
         r2 = mean_rev.on_bar(bar)
+        r3 = au200.on_bar(_make_bar(9000.0, instrument="AU200.cash"))
 
         assert r1 is None or isinstance(r1, Signal)
         assert r2 is None or isinstance(r2, Signal)
+        assert r3 is None or isinstance(r3, Signal)
 
 
 # ---------------------------------------------------------------------------

@@ -24,22 +24,22 @@ Talim is not a monolithic trading bot. She is a reasoning agent backed by determ
 
 ## 2. System components
 
-### 2.1 NanoClaw (personal assistant layer)
+### 2.1 External assistant client (optional)
 
-NanoClaw is a **separate process** — a lightweight personal assistant that handles general tasks: calendar, research, reminders, news summaries. It runs its own LLM and maintains its own memory. It has no knowledge of Talim's internal state.
+An external assistant client — for example OpenClaw, a Discord bot, or another private tool — may sit in front of Talim. It handles general tasks such as calendar, research, reminders, and non-trading chat. It has no knowledge of Talim's internal state unless Talim returns it through the bridge.
 
-Its only connection to Talim is the **bridge API** — a single HTTP endpoint. When NanoClaw detects a trading-related intent in an incoming Discord message, it forwards it to Talim via `POST /talim/converse`. Talim's reply is returned and NanoClaw posts it back to Discord.
+Its only connection to Talim is the **bridge API** — a small HTTP contract. When the assistant detects a trading-related intent in an incoming message, it forwards it to Talim via `POST /talim/converse`. Talim's reply is returned to the caller, which can then render or relay it however it wants.
 
-NanoClaw is optional scaffolding. Talim functions independently of it.
+The assistant layer is optional scaffolding. Talim functions independently of it.
 
-**What NanoClaw handles directly (without routing to Talim):**
+**What the external assistant handles directly (without routing to Talim):**
 
 - Calendar and scheduling queries
 - General research and web search
 - News summaries unrelated to open positions
 - Personal reminders and tasks
 
-**What NanoClaw routes to Talim:**
+**What the external assistant routes to Talim:**
 
 - Any message about strategies, positions, regime, signals
 - Backtest requests
@@ -51,7 +51,7 @@ NanoClaw is optional scaffolding. Talim functions independently of it.
 Talim is a **LangGraph application** running as a persistent Python process. She has two independent entry points:
 
 1. **Cron trigger** — fires every 5 minutes during market hours, initiates the signal scanning loop
-2. **Bridge POST** — receives forwarded Discord messages from NanoClaw
+2. **Bridge POST** — receives forwarded messages from an external assistant client
 
 Both entry points flow through the same LangGraph graph, sharing the same state object.
 
@@ -78,7 +78,7 @@ Both entry points flow through the same LangGraph graph, sharing the same state 
 |-----------|----------------|
 | Redis Streams (internal bus) | ~200 MB |
 | Talim LangGraph process | ~1.5 GB |
-| NanoClaw process | ~500 MB |
+| External assistant client | ~500 MB |
 | SQLite + OS + headroom | ~1 GB |
 | **Total** | **~3.2 GB** (~5 GB spare) |
 
@@ -89,7 +89,6 @@ Docker Compose manages all services. Each service has a restart policy of `alway
 ```
 services:
   talim          # LangGraph application
-  nanoclaw       # Personal assistant
   redis          # Internal event bus
   nginx          # Reverse proxy for bridge API
 ```
@@ -181,7 +180,7 @@ The human-in-the-loop interrupt is a native LangGraph feature. When a trade sign
 3. Freezes the graph state to SQLite
 4. Waits indefinitely
 
-When you react with ✅ or ❌ (or reply via slash command), NanoClaw translates the reaction to a `POST /talim/resume` call. LangGraph resumes from the checkpoint with full context intact, including the pending signal and all market state at the time the signal fired.
+When you react with ✅ or ❌ (or reply via slash command), the external assistant or Discord integration translates the reaction to a `POST /talim/resume` call. LangGraph resumes from the checkpoint with full context intact, including the pending signal and all market state at the time the signal fired.
 
 If the VPS restarts while a signal is pending, the interrupt resumes correctly on restart — the SQLite checkpoint is the source of truth.
 
@@ -254,7 +253,7 @@ Maintains persistent WebSocket connections to exchange feeds. Normalises all tic
 
 ### 6.4 Discord connector
 
-Two-way. Outbound: posts formatted alerts to `#talim-alerts` and replies to `#talim-chat`. Inbound: NanoClaw listens for reactions and commands, translates them to bridge API calls.
+Two-way. Outbound: posts formatted alerts to `#talim-alerts` and replies to `#talim-chat`. Inbound: an external assistant or Discord integration listens for reactions and commands, then translates them to bridge API calls.
 
 **Discord channel structure:**
 
@@ -337,7 +336,7 @@ Historical data is stored locally on the VPS. A nightly cron job appends the pre
 
 ## 8. Memory architecture
 
-Four distinct memory stores. Nothing crosses between NanoClaw and Talim.
+Four distinct memory stores. Assistant-side memory is separate from Talim's internal stores.
 
 ### 8.1 Talim — working memory (Type A)
 
@@ -411,13 +410,13 @@ CREATE TABLE decisions (
 **Lifetime:** Updated nightly by cron job  
 **Access:** Numpy nearest-neighbour search at backtest time
 
-### 8.5 NanoClaw memory
+### 8.5 External assistant memory
 
-**Store:** `MEMORY.md` and `CLAUDE.md` on NanoClaw's filesystem  
+**Store:** Depends on the assistant implementation (for example OpenClaw state/config or another external memory store)  
 **Contents:** Personal preferences, calendar context, general facts about you  
 **Scope:** Never contains trading state, positions, or strategy information
 
-**Hard boundary:** Talim's SQLite databases and markdown files are not mounted into NanoClaw's container. NanoClaw cannot read or write Talim's memory.
+**Hard boundary:** Talim's SQLite databases and markdown files are not mounted into the assistant runtime. The assistant cannot read or write Talim's memory directly.
 
 ---
 
@@ -481,8 +480,6 @@ OVH VPS (Sydney)
 │   │       ├── langgraph.db      # LangGraph checkpoints
 │   │       ├── regime_library.db # fingerprint library
 │   │       └── decisions.db      # episodic memory
-│   ├── nanoclaw/
-│   │   └── workspace/     # MEMORY.md, CLAUDE.md, skills
 │   ├── redis/             # Internal event bus
 │   └── nginx/             # Reverse proxy, TLS termination
 │
@@ -498,7 +495,7 @@ OVH VPS (Sydney)
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | Orchestration | LangGraph | Persistent state, durable HITL interrupts, conditional edges |
-| Personal assistant | NanoClaw | Lightweight, Discord-native, container isolation |
+| Personal assistant | External assistant client (for example OpenClaw) | Keep the bridge boundary stable; deploy the assistant independently |
 | Backtest engine | vectorbt | Fast, pandas-native, parity with live code |
 | Backtest cross-check | QuantConnect MCP | Independent data source for validation |
 | Crypto exchange | ccxt | Unified API across Binance, Bybit etc. |

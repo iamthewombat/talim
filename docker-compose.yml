@@ -38,18 +38,6 @@ services:
     expose:
       - "8000"
 
-  nanoclaw:
-    build:
-      context: .
-      dockerfile: nanoclaw/Dockerfile
-    container_name: talim-nanoclaw
-    restart: unless-stopped
-    depends_on:
-      - talim
-    environment:
-      - TALIM_BRIDGE_URL=http://talim:8000
-      - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
-
   scheduler:
     image: aptible/supercronic:latest
     container_name: talim-scheduler

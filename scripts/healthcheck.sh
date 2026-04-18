@@ -26,11 +26,4 @@ else
     fail "bridge /talim/health direct failed"
 fi
 
-# 4) NanoClaw container is up.
-if docker inspect -f '{{.State.Running}}' talim-nanoclaw 2>/dev/null | grep -q true; then
-    pass "nanoclaw running"
-else
-    fail "nanoclaw not running"
-fi
-
 echo "All services healthy."

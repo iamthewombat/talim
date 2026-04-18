@@ -19,12 +19,9 @@ class TestDeploymentFiles:
         assert "uvicorn" in body
         assert "EXPOSE 8000" in body
 
-    def test_nanoclaw_dockerfile(self):
-        assert (ROOT / "nanoclaw" / "Dockerfile").exists()
-
     def test_compose_has_required_services(self):
         body = _read("docker-compose.yml")
-        for svc in ("redis:", "talim:", "nanoclaw:", "nginx:"):
+        for svc in ("redis:", "talim:", "scheduler:", "nginx:"):
             assert svc in body, f"missing service {svc}"
 
     def test_compose_uses_bridge_secret(self):

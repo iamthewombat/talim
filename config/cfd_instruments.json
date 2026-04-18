@@ -1,0 +1,90 @@
+{
+  "venues": {
+    "ig": {
+      "supports_market_orders": true,
+      "supports_marketable_limits": true,
+      "supports_limit_orders": true,
+      "supports_stop_orders": true,
+      "supports_attached_stops_limits": true,
+      "supports_guaranteed_stops": true,
+      "supports_partial_fills": true,
+      "supports_working_orders": true,
+      "supports_streaming_prices": true,
+      "supports_demo": true,
+      "supports_live": true,
+      "position_model": "netted"
+    }
+  },
+  "instruments": [
+    {
+      "canonical_id": "AU200.cash",
+      "display_name": "Australia 200 Cash CFD",
+      "asset_class": "index_cfd",
+      "quote_currency": "AUD",
+      "tick_size": null,
+      "price_precision": null,
+      "min_size": null,
+      "size_step": null,
+      "point_value": 1.0,
+      "margin_rate": 0.05,
+      "financing_model": "overnight_cash_cfd",
+      "session": {
+        "timezone": "Australia/Sydney",
+        "windows": [
+          {
+            "opens_day": "MON",
+            "opens_time": "08:00",
+            "closes_day": "SAT",
+            "closes_time": "07:00"
+          }
+        ]
+      },
+      "venues": {
+        "ig": {
+          "lookup_hint": "Australia 200",
+          "broker_symbol": "IX.D.ASX.IFT.IP",
+          "market_id": "IX.D.ASX.IFT.IP",
+          "expiry": "-",
+          "venue_display_name": "Australia 200 Cash (A$1)",
+          "product_type": "indices",
+          "notes": "Resolved against IG demo on 2026-04-12. Market status returned as EDITS_ONLY; review tick size, point value, and session metadata before enabling trading."
+        }
+      }
+    },
+    {
+      "canonical_id": "AU200.fwd",
+      "display_name": "Australia 200 Futures CFD",
+      "asset_class": "index_cfd",
+      "quote_currency": "AUD",
+      "tick_size": null,
+      "price_precision": null,
+      "min_size": null,
+      "size_step": null,
+      "point_value": 5.0,
+      "margin_rate": 0.05,
+      "financing_model": "spread_included_forward_cfd",
+      "session": {
+        "timezone": "Australia/Sydney",
+        "windows": [
+          {
+            "opens_day": "MON",
+            "opens_time": "08:00",
+            "closes_day": "SAT",
+            "closes_time": "07:00"
+          }
+        ]
+      },
+      "venues": {
+        "ig": {
+          "lookup_hint": "Australia 200",
+          "broker_symbol": "IX.D.ASX.FWM2.IP",
+          "market_id": "IX.D.ASX.FWM2.IP",
+          "expiry": "JUN-26",
+          "venue_display_name": "Australia 200 (A$5)",
+          "product_type": "indices",
+          "notes": "Resolved against IG demo on 2026-04-12 with JUN-26 expiry. Market status returned as EDITS_ONLY; expiry roll handling and remaining contract metadata still need implementation."
+        }
+      }
+    }
+  ]
+}

@@ -31,7 +31,7 @@ Phase 4: Intelligence (parallel, after WP-08)
 
 Phase 5: Interface (parallel, after WP-08)
   WP-15  Discord bot connector
-  WP-16  NanoClaw bridge API
+  WP-16  Bridge API
   WP-17  Risk check node
 
 Phase 6: Deployment & Integration
@@ -396,16 +396,15 @@ otherwise                            → "end"
 
 ---
 
-### WP-16 — NanoClaw Bridge API
+### WP-16 — Bridge API
 
-**Goal:** The HTTP bridge between NanoClaw and Talim.
+**Goal:** The HTTP bridge between Talim and any external assistant or client.
 
 **Deliverables:**
 - `talim/api/bridge.py` — FastAPI app with two endpoints:
   - `POST /talim/converse` — receives Discord message, invokes LangGraph bridge entry point, returns response
   - `POST /talim/resume` — receives approval/rejection, resumes frozen graph
-- `talim/api/auth.py` — shared secret auth between NanoClaw and Talim (from env var)
-- `nanoclaw/router.py` — intent classifier that decides whether to handle locally or forward to Talim (stub NanoClaw for PoC)
+- `talim/api/auth.py` — shared secret auth between bridge clients and Talim (from env var)
 
 **Tests:**
 - Unit test: POST to `/talim/converse` with a trading question, verify graph is invoked and response returned
@@ -416,7 +415,7 @@ otherwise                            → "end"
 **Verification:** `pytest tests/test_bridge.py` — all green.
 
 **Session prompt hint:**
-> "Build the NanoClaw bridge API for Talim using FastAPI. Two endpoints: POST /talim/converse (forwards messages to the LangGraph graph) and POST /talim/resume (resumes HITL-frozen graphs). Include shared-secret auth. Create a stub NanoClaw intent router. Write tests for both endpoints."
+> "Build the bridge API for Talim using FastAPI. Two endpoints: POST /talim/converse (forwards messages to the LangGraph graph) and POST /talim/resume (resumes HITL-frozen graphs). Include shared-secret auth and tests for both endpoints."
 
 ---
 
@@ -449,9 +448,8 @@ otherwise                            → "end"
 **Goal:** The full deployment configuration — everything runs with `docker compose up`.
 
 **Deliverables:**
-- `docker-compose.yml` — services: talim, nanoclaw (stub), redis, nginx
+- `docker-compose.yml` — services: talim, scheduler, redis, nginx
 - `talim/Dockerfile` — Python app with all dependencies
-- `nanoclaw/Dockerfile` — lightweight stub
 - `nginx/nginx.conf` — reverse proxy for bridge API with TLS termination
 - `scripts/healthcheck.sh` — verifies all services are running
 - `.env.example` — template for all required env vars
@@ -466,7 +464,7 @@ otherwise                            → "end"
 **Verification:** `docker compose up -d && ./scripts/healthcheck.sh` — all services healthy.
 
 **Session prompt hint:**
-> "Create the Docker Compose deployment stack for Talim. Four services: talim (LangGraph app), nanoclaw (stub), redis, nginx (reverse proxy). Include Dockerfiles, nginx config, healthcheck script, .env.example, and cron job configs. Verify everything starts cleanly."
+> "Create the Docker Compose deployment stack for Talim. Four services: talim (LangGraph app), scheduler, redis, nginx (reverse proxy). Include Dockerfiles, nginx config, healthcheck script, .env.example, and cron job configs. Verify everything starts cleanly."
 
 ---
 
@@ -905,7 +903,7 @@ These work packages cover everything required to take Talim from a PoC with a gr
 
 ### WP-42 — TLS & Public Reachability
 
-**Goal:** Bridge is HTTP-only today. To receive NanoClaw / Discord webhooks from outside, it needs TLS.
+**Goal:** Bridge is HTTP-only today. To receive external assistant / Discord webhooks from outside, it needs TLS.
 
 **Deliverables:**
 - Automate cert provisioning: either a Caddy sidecar (auto-Let's Encrypt) replacing nginx, or a nginx + certbot companion.
@@ -964,14 +962,369 @@ These work packages cover everything required to take Talim from a PoC with a gr
 
 ---
 
-### WP-46 — NanoClaw Real Deployment
+### WP-46 — External Assistant Deployment
 
-**Goal:** NanoClaw is a stub container today. Either deploy the real NanoClaw or remove the stub and document the external dependency.
+**Goal:** The bundled assistant stub is gone. Either deploy a real external assistant (for example OpenClaw) or document direct bridge usage.
 
 **Deliverables:**
-- Decision doc: deploy NanoClaw, replace with a generic MCP client, or drop entirely.
-- If deploying: real NanoClaw image referenced in compose, wired to `/talim/converse` with the shared secret.
-- If dropping: remove the stub from compose, update README.
+- Decision doc: deploy OpenClaw, replace with another assistant client, or use the bridge directly.
+- If deploying: document the external assistant deployment and wire it to `/talim/converse` with the shared secret.
+- If using direct bridge mode: document the caller contract and keep the compose stack assistant-free.
 
 **Tests:**
-- Integration: NanoClaw → bridge conversation round-trip (or: stub removed cleanly with no dangling references).
+- Integration: external assistant → bridge conversation round-trip (or: assistant-free bridge path documented cleanly with no dangling references).
+
+---
+
+### WP-47 — Portable Local Deployment & VPS Migration Layout
+
+**Goal:** Make the local laptop setup the default development environment while keeping the stack easy to move to a VPS later without re-architecting storage, networking, or restore procedures.
+
+**Deliverables:**
+- Replace migration-hostile named volumes with explicit bind-mounted project directories where practical (for example `./state`, `./redis`, `./backups`, `./data`) so state can be copied directly to a new host.
+- Document a local-first deployment layout covering OpenClaw + Talim + Redis + Grafana with private-only access and no public ingress requirement.
+- Add a migration runbook: provision new host, install Docker/Tailscale/OpenClaw, copy state/config, restore Talim databases, start compose, verify health, switch client endpoints.
+- Keep environment/config host-agnostic: no hardcoded laptop paths, no host-specific network assumptions, no mandatory public DNS requirement.
+
+**Tests:**
+- Manual: bring the stack up from a clean clone on a second machine using only the documented bind-mounted state/config layout.
+- Manual: restore Talim state from copied directories/backups and confirm healthcheck + bridge endpoints succeed.
+
+---
+
+## Phase 10: Broker-Agnostic CFD Core (IG-First)
+
+> These work packages adapt Talim from the current ES futures / Binance-oriented PoC into a broker-agnostic CFD trading architecture. `IG AU` is the first implementation target because its API surface is documented and demo-accessible, but the design should make a second venue such as `FOREX.com AU` an adapter exercise rather than a rewrite.
+
+### WP-48 — CFD Venue Contract and Instrument Registry
+
+**Goal:** Define the canonical CFD model Talim will use internally so broker-specific quirks do not leak into the strategy and risk layers.
+
+**Deliverables:**
+- Canonical instrument id scheme for CFD markets (for example `AU200.cash`, `AU200.fwd`, `EURUSD.cfd`).
+- `CfdInstrumentSpec` / venue metadata model covering at least:
+  - canonical instrument id
+  - broker symbol / epic / market id
+  - display name
+  - asset class
+  - quote currency
+  - tick size and price precision
+  - min size / size step
+  - point value
+  - margin rate / tiering support
+  - financing model
+  - session hours / calendar
+  - position model hints (netted vs hedged)
+- Venue capability model for order semantics such as:
+  - market vs marketable-limit support
+  - stop / limit / guaranteed stop support
+  - partial fills
+  - working orders
+  - demo vs live environment split
+- Registry/config format so a strategy can select a canonical instrument without hardcoding broker symbols.
+
+**Tests:**
+- Unit: instrument registry resolves canonical ids into venue-specific metadata.
+- Unit: capability flags validate unsupported order combinations before broker calls.
+- Unit: session/calendar metadata loads cleanly for AU index CFD instruments.
+
+---
+
+### WP-49 — IG AU Feasibility and Market Discovery
+
+**Goal:** Lock down the first concrete venue by confirming the exact IG account, API, and product details required for AU index CFDs.
+
+**Deliverables:**
+- Decision doc covering:
+  - IG account type and demo/live prerequisites
+  - API key/session bootstrap flow
+  - exact `Australia 200` tradable markets to support first (`cash` vs `futures` CFD)
+  - order types and dealing-rule constraints returned by IG
+  - rate limits, streaming limits, and relevant cost assumptions
+- Market discovery script for pulling IG dealing rules and contract details for target instruments.
+- IG-specific mapping entries for the initial CFD universe in the canonical registry.
+- Clear go/no-go criteria for proceeding with IG as the first live-capable CFD venue.
+
+**Tests:**
+- Manual: authenticated demo API session succeeds and returns account + market metadata.
+- Manual: target `Australia 200` market discovery returns usable dealing rules and identifiers.
+
+---
+
+### WP-50 — IG Exchange Adapter
+
+**Goal:** Implement the first real CFD broker adapter against the broker-neutral venue contract.
+
+**Deliverables:**
+- `talim/connectors/exchange/ig_exchange.py` implementing `BaseExchange`.
+- IG session/auth handling and token refresh lifecycle.
+- Implementations for:
+  - `place_order(...)`
+  - `cancel_order(...)`
+  - `get_positions()`
+  - `get_account_balance()`
+  - `get_order(...)`
+- Normalisation layer from IG orders/positions/confirms into Talim models.
+- Factory wiring so IG can be selected cleanly by configuration.
+
+**Tests:**
+- Unit: request/response mapping for IG orders, positions, balances, and order status.
+- Integration: mocked IG round-trip for login → place order → fetch positions → cancel/close order.
+- Integration: connector normalises IG payloads into Talim `Order` / `Position` models.
+
+---
+
+### WP-51 — CFD Market Data Pipeline (IG-First)
+
+**Goal:** Replace the Binance-only live feed assumption with a CFD-capable data layer that can support both streaming and historical replay.
+
+**Deliverables:**
+- `talim/connectors/pricefeed/ig.py` or equivalent IG-specific feed implementation.
+- Lightstreamer client wrapper plus REST fallback/backfill path.
+- Local bar builder that aggregates live ticks/prices into Talim `OHLCVBar` intervals such as `5m`.
+- Historical ingestion/cache pipeline for target CFD instruments into Parquet compatible with the backtest loader.
+- Config path to select the IG CFD feed and canonical instrument ids instead of Binance symbols.
+
+**Tests:**
+- Unit: IG price payloads normalise into valid market snapshots and `OHLCVBar` objects.
+- Unit: reconnect/backfill logic preserves bar continuity across a simulated disconnect.
+- Integration: live/demo IG feed produces bars for the target AU index CFD.
+- Integration: ingested Parquet files load cleanly through `talim/backtest/data_loader.py`.
+
+---
+
+### WP-52 — CFD Risk, P&L, and Session Model
+
+**Goal:** Make Talim's execution and risk logic CFD-aware rather than relying on futures/spot assumptions.
+
+**Deliverables:**
+- Extend risk config and checks to consume canonical CFD instrument specs instead of futures-centric hardcoded groups.
+- Margin-aware exposure model including tiered margin compatibility where available.
+- Financing / overnight funding treatment for cash CFDs and spread-based handling for forward/futures-style CFDs.
+- Session/calendar-aware scanner and execution rules for AU index CFD trading hours.
+- Position/reconciliation updates that can respect broker-specific netting semantics while preserving canonical Talim state.
+
+**Tests:**
+- Unit: exposure and margin calculations are correct for the canonical AU index CFD spec.
+- Unit: risk rules block positions that exceed available margin or configured CFD exposure limits.
+- Unit: P&L calculation handles point value, financing, and session rollover inputs correctly.
+- Integration: mocked broker positions reconcile cleanly into Talim state using canonical instrument ids.
+
+**Status:** Completed on 2026-04-13 with CFD-aware margin utilisation, session gating, financing-aware snapshots, AU200 point-value metadata, and netted reconciliation behaviour.
+
+---
+
+### WP-53 — AU200 Strategy Package and IG Demo Soak
+
+**Goal:** Validate the first end-to-end CFD path on `IG AU` with a strategy and dataset that match the target market.
+
+**Deliverables:**
+- At least one AU index CFD strategy package (for example `momentum-AU200`).
+- Strategy markdown documenting market rationale, session assumptions, and tuned params.
+- 1-2 years of historical AU index CFD bars in Parquet for backtests.
+- Demo runbook covering login, feed startup, scanner cadence, HITL approval, order placement, and rollback.
+- 2+ week IG demo soak checklist and post-soak go/no-go review doc.
+
+**Tests:**
+- Unit: strategy `on_bar` behaviour on synthetic AU index scenarios.
+- Integration: backtest runs successfully against AU index Parquet data.
+- Manual: end-to-end demo trade lifecycle on the target AU index CFD contract.
+- Manual: recovery drill during an in-flight pending signal and during an open position.
+
+**Status:** Completed on 2026-04-13 with `momentum-AU200`, timeframe-aware AU200 backtests, IG dataset build/runbook tooling, a soak checklist/review template, and the first recorded AU200 baseline run on IG demo historical data.
+
+---
+
+## Phase 11: Prediction Market Venue Enablement
+
+### WP-54 — Polymarket Feasibility, Compliance, and Product Fit Gate
+
+**Goal:** Establish whether a Polymarket integration is legally and operationally usable before spending time on connector work.
+
+**Deliverables:**
+- Short feasibility note covering:
+  - jurisdiction/geoblock constraints for the intended operator location
+  - whether the target use case is paper-only, research-only, or intended for live execution
+  - whether Talim's current bar-based strategy/risk architecture is a good fit for event markets
+- Decision memo with one of:
+  - proceed with research-only integration
+  - proceed with paper/simulated connector only
+  - stop due to compliance/product mismatch
+- Documented assumptions for:
+  - wallet custody
+  - USDC funding flow
+  - event universe to trade
+  - acceptable market liquidity thresholds
+
+**Tests:**
+- N/A: documentation and feasibility gate only.
+
+---
+
+### WP-55 — Polymarket Wallet Auth and Exchange Connector
+
+**Goal:** Add the authenticated execution path required for signed CLOB trading rather than reusing the existing ccxt broker model.
+
+**Deliverables:**
+- `talim/connectors/exchange/polymarket.py` or equivalent connector module.
+- Wallet/auth support for:
+  - Polygon wallet key loading
+  - L1 auth/signing bootstrap
+  - L2 API credential usage
+- Connector methods for:
+  - place order
+  - cancel order
+  - get open orders
+  - get fills/trades
+  - get positions/balances
+- Config surface for paper/mock mode vs authenticated live-capable mode.
+- Clear separation between connector state and secret material.
+
+**Tests:**
+- Unit: signed request construction uses the expected auth headers and payload shape.
+- Unit: order placement/cancel/status parsing handles success and common failure responses.
+- Integration: mocked authenticated connector can create/cancel orders and refresh balances/positions.
+
+---
+
+### WP-56 — Polymarket Market Data and WebSocket Feed
+
+**Goal:** Build a venue-specific data layer for event markets, which are orderbook/probability-driven rather than conventional OHLCV-only bars.
+
+**Deliverables:**
+- Market discovery client for event/market metadata.
+- Orderbook/trade feed client using Polymarket's websocket/public APIs.
+- Normalised internal market snapshot model capturing at least:
+  - market id / slug
+  - best bid / ask
+  - midpoint / implied probability
+  - spread
+  - depth / recent trades
+  - time to resolution
+- Optional derived bar/snapshot series for research/backtesting where needed.
+- Historical capture job for market snapshots/trades into a replayable local format.
+
+**Tests:**
+- Unit: API/websocket payloads normalise into stable market snapshot objects.
+- Unit: reconnect/resubscribe logic preserves stream continuity after a disconnect.
+- Integration: selected market metadata and live orderbook snapshots load for a mocked/recorded session.
+
+---
+
+### WP-57 — Prediction Market Position, Risk, and Settlement Model
+
+**Goal:** Extend Talim's futures/CFD-biased risk model to handle binary outcome markets, capped payout profiles, and event resolution.
+
+**Deliverables:**
+- Instrument/market spec registry for prediction markets including:
+  - event id
+  - market id
+  - outcome token
+  - tick size
+  - resolution timestamp
+  - category / topic
+  - liquidity metrics
+- Position model updates for:
+  - YES/NO style outcome exposure
+  - max loss / max payout
+  - collateral consumption
+  - realized vs unresolved P&L
+- Risk rules for:
+  - event concentration
+  - correlated outcome exposure
+  - liquidity/spread thresholds
+  - stale market / near-resolution trading restrictions
+- Settlement/reconciliation flow for resolved markets and redeemed collateral.
+
+**Tests:**
+- Unit: max loss, payout, and marked-to-mid P&L calculations are correct for binary outcome positions.
+- Unit: risk rules block oversized or illiquid prediction-market positions.
+- Integration: mocked resolved market positions reconcile into settled Talim state cleanly.
+
+---
+
+### WP-58 — Event-Driven Strategy and Backtest Framework
+
+**Goal:** Add a strategy and replay model that suits prediction markets instead of assuming ATR/regime logic from continuous financial bars.
+
+**Deliverables:**
+- Event-market strategy interface or extensions for signals driven by:
+  - price/probability dislocations
+  - spread/depth changes
+  - event state changes
+  - optional external catalysts/news inputs
+- At least one baseline strategy package for paper evaluation.
+- Historical replay format and backtest harness for market snapshots/trades plus final resolution outcomes.
+- Evaluation metrics suited to prediction markets:
+  - expected value
+  - realized payout
+  - time-to-resolution exposure
+  - liquidity/slippage sensitivity
+- Documentation on where the current ES/AU200 strategy assumptions do not transfer.
+
+**Tests:**
+- Unit: baseline strategy emits deterministic signals for synthetic event-market scenarios.
+- Integration: replay harness can simulate entry, exit, and resolution across historical snapshot data.
+- Integration: summary metrics reflect capped payout profiles and unresolved-position handling.
+
+---
+
+## Phase 12: Second CFD Venue Portability
+
+### WP-59 — FOREX.com AU Feasibility and Market Mapping
+
+**Goal:** Validate whether the broker-neutral CFD core built for IG can be applied to `FOREX.com AU` without structural changes.
+
+**Deliverables:**
+- Decision doc covering:
+  - account/API entitlement path
+  - exact target AU index CFD identifiers
+  - order-type and position-model differences vs IG
+  - rate-limit, auth, and demo/live environment differences
+- Mapping document from canonical CFD instrument ids to `FOREX.com` symbols.
+- Gap analysis against the Phase 10 venue contract:
+  - supported as-is
+  - requires optional capability flags
+  - requires structural changes
+
+**Tests:**
+- Manual: authenticated API session succeeds and returns account metadata.
+- Manual: tradable instrument lookup returns the target AU index CFD contract.
+
+---
+
+### WP-60 — FOREX.com Exchange and Price Feed Adapters
+
+**Goal:** Implement `FOREX.com` on top of the broker-neutral CFD architecture, not as a parallel one-off stack.
+
+**Deliverables:**
+- `talim/connectors/exchange/forexcom_exchange.py` implementing the Phase 10 CFD venue contract.
+- `talim/connectors/pricefeed/forexcom.py` or equivalent feed adapter using canonical instrument ids.
+- Response normalisers for orders, balances, positions, and live/demo market data.
+- Factory/config wiring to select IG or `FOREX.com` cleanly without changing strategy/risk code.
+
+**Tests:**
+- Unit: `FOREX.com` payload mapping for orders, balances, positions, and price data.
+- Integration: mocked API round-trip for login → place order → fetch positions → cancel/close order.
+- Integration: feed adapter emits canonical bars/snapshots compatible with the existing scanner.
+
+---
+
+### WP-61 — Multi-Broker CFD Conformance and Demo Regression
+
+**Goal:** Prove that the canonical CFD model is genuinely portable across brokers rather than only looking generic on paper.
+
+**Deliverables:**
+- Conformance test suite that runs the same broker-agnostic assertions against IG and `FOREX.com` adapters.
+- Regression checklist covering:
+  - canonical instrument resolution
+  - order placement semantics
+  - stop/limit handling
+  - position reconciliation
+  - margin/P&L consistency
+  - bar continuity and session handling
+- Demo soak runbooks for both brokers using the same Talim strategy/risk flow.
+
+**Tests:**
+- Integration: shared broker-agnostic adapter tests pass for both IG and `FOREX.com` implementations.
+- Manual: end-to-end demo trade lifecycle succeeds on both brokers for the target AU index CFD path.

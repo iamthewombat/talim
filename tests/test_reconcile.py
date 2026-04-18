@@ -121,6 +121,37 @@ class TestReconcilePositions:
         repairs = reconcile_positions(exchange, episodic, state_positions=[state_pos])
         assert repairs == []
 
+    def test_duplicate_cfd_state_positions_are_netted_before_comparison(self, exchange, episodic):
+        exchange.set_fill_price("AU200.cash", 9000.0)
+        exchange.place_order("AU200.cash", "buy", 1.0, strategy="momentum-AU200")
+        _record_pending(episodic, "AU200.cash", "long", 9000.0)
+
+        repairs = reconcile_positions(
+            exchange,
+            episodic,
+            state_positions=[
+                Position(
+                    instrument="AU200.cash",
+                    side="long",
+                    qty=0.6,
+                    entry_price=9000.0,
+                    stop=8950.0,
+                    target=9075.0,
+                    strategy="momentum-AU200",
+                ),
+                Position(
+                    instrument="AU200.cash",
+                    side="long",
+                    qty=0.4,
+                    entry_price=9001.0,
+                    stop=8951.0,
+                    target=9076.0,
+                    strategy="momentum-AU200",
+                ),
+            ],
+        )
+        assert repairs == []
+
 
 # --- reconcile node tests ---
 

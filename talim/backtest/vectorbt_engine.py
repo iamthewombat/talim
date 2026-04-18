@@ -61,6 +61,7 @@ def _mean_reversion_signals(
 
 _TRANSLATORS = {
     "momentum-ES": _momentum_signals,
+    "momentum-AU200": _momentum_signals,
     "mean-reversion-ES": _mean_reversion_signals,
 }
 

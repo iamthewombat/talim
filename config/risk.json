@@ -3,6 +3,9 @@
     "max_total_exposure": 100000.0,
     "max_daily_drawdown": -2000.0,
     "max_correlated_positions": 1,
+    "max_margin_utilization_pct": 1.0,
+    "cfd_financing_annual_rate": 0.08,
+    "enforce_cfd_session_windows": true,
     "block_on_existing_same_instrument": true,
     "correlation_groups": [
         ["ES", "NQ", "YM", "RTY"],

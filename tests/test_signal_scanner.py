@@ -12,6 +12,8 @@ from talim.app.nodes.signal_scanner import (
     _context,
 )
 from talim.connectors.pricefeed.mock import MockPriceFeed
+from talim.connectors.pricefeed.base import BasePriceFeed
+from talim.models.bar import OHLCVBar
 from talim.models.signal import Signal
 from talim.strategy.loader import load_strategy
 
@@ -54,6 +56,36 @@ def _setup_scanner(df: pd.DataFrame, strategies: list[str] | None = None):
     feed.subscribe("ES")
     feed.replay()  # populates the history via the callback
     return feed
+
+
+class _PollingFeed(BasePriceFeed):
+    def __init__(self, bars: list[OHLCVBar]):
+        super().__init__()
+        self._bars = bars
+        self._primed = False
+        self.prime_calls = 0
+        self.poll_calls = 0
+
+    def connect(self) -> None:
+        self._connected = True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    def subscribe(self, instrument: str) -> None:
+        self._subscribed.add(instrument)
+
+    def prime_history(self, instrument: str, min_bars: int = 50) -> list[OHLCVBar]:
+        self.prime_calls += 1
+        if not self._primed:
+            for bar in self._bars[:min_bars]:
+                self._emit(bar)
+            self._primed = True
+        return self._bars[:min_bars]
+
+    def poll_once(self, instrument: str) -> OHLCVBar | None:
+        self.poll_calls += 1
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +184,33 @@ class TestSignalScannerNode:
         sig = update.get("pending_signal")
         assert sig is not None
         assert sig.regime_context == "momentum"
+
+    def test_live_feed_can_prime_history_on_demand(self):
+        _context.reset()
+        df = _make_trending_df(80)
+        bars = [
+            OHLCVBar(
+                instrument="AU200.cash",
+                timestamp=ts.to_pydatetime(),
+                open=float(row.open),
+                high=float(row.high),
+                low=float(row.low),
+                close=float(row.close),
+                volume=float(row.volume),
+                timeframe="5m",
+            )
+            for ts, row in zip(df["timestamp"], df.itertuples(index=False))
+        ]
+        feed = _PollingFeed(bars)
+        strategy = load_strategy("momentum-ES")
+        configure_scanner(feed, strategies=[strategy])
+        feed.connect()
+        feed.subscribe("AU200.cash")
+
+        update = signal_scanner({})
+        assert feed.poll_calls == 1
+        assert feed.prime_calls == 1
+        assert update.get("current_bar") is not None
 
 
 # ---------------------------------------------------------------------------

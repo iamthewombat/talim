@@ -32,11 +32,16 @@ def load_ohlcv(
     data_dir: str | Path,
     instrument: str,
     matched_dates: list[date] | None = None,
+    timeframe: str | None = None,
 ) -> pd.DataFrame:
     """Load OHLCV bars for `instrument`, optionally filtered to `matched_dates`."""
     root = Path(data_dir)
     per_day_dir = root / instrument
     if per_day_dir.is_dir():
+        if timeframe:
+            timeframe_file = per_day_dir / f"{timeframe}.parquet"
+            if timeframe_file.exists():
+                return _validate(pd.read_parquet(timeframe_file))
         if matched_dates:
             files = [per_day_dir / f"{d.isoformat()}.parquet" for d in matched_dates]
             files = [f for f in files if f.exists()]

@@ -1,14 +1,18 @@
 """Tests for the risk_check node and rules (WP-17)."""
 
 import json
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
+from talim.app.execute_context import configure_execute, get_execute_context
 from talim.app.nodes.risk_check import (
     check_signal,
     configure_risk_rules,
     risk_check,
 )
+from talim.connectors.exchange.mock_exchange import MockExchange
 from talim.models.position import Position
 from talim.models.signal import Signal
 from talim.risk.rules import DEFAULT_RULES, RiskRules, load_rules
@@ -28,6 +32,48 @@ def _position(instrument: str = "ES", qty: float = 1.0) -> Position:
         entry_price=5400.0, stop=5380.0, target=5440.0,
         strategy="momentum-ES",
     )
+
+
+def _cfd_signal(
+    instrument: str = "AU200.cash",
+    *,
+    entry_price: float = 9000.0,
+    timestamp: datetime | None = None,
+) -> Signal:
+    return Signal(
+        instrument=instrument,
+        strategy="momentum-AU200",
+        side="long",
+        entry_price=entry_price,
+        stop=entry_price - 50.0,
+        target=entry_price + 75.0,
+        rationale="t",
+        regime_context="momentum",
+        timestamp=timestamp,
+    )
+
+
+def _cfd_position(
+    instrument: str = "AU200.cash",
+    *,
+    qty: float = 1.0,
+    entry_price: float = 9000.0,
+) -> Position:
+    return Position(
+        instrument=instrument,
+        side="long",
+        qty=qty,
+        entry_price=entry_price,
+        stop=entry_price - 50.0,
+        target=entry_price + 75.0,
+        strategy="momentum-AU200",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_execute_context():
+    yield
+    get_execute_context().reset()
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +166,70 @@ class TestCheckSignal:
         ok, reason = check_signal(_signal("ES"), [_position("GC")], 0.0, rules)
         assert ok is True
 
+    def test_cfd_margin_limit_blocks(self):
+        rules = RiskRules(
+            max_total_exposure=1_000_000.0,
+            max_margin_utilization_pct=0.5,
+            block_on_existing_same_instrument=False,
+            max_correlated_positions=5,
+        )
+        ok, reason = check_signal(
+            _cfd_signal(timestamp=datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc)),
+            [],
+            0.0,
+            rules,
+            qty=2.0,
+            account_balance=1_000.0,
+        )
+        assert ok is False
+        assert "required margin" in reason
+
+    def test_cfd_family_counts_as_correlated(self):
+        rules = RiskRules(
+            block_on_existing_same_instrument=False,
+            max_correlated_positions=1,
+            max_total_exposure=1_000_000.0,
+        )
+        ok, reason = check_signal(
+            _cfd_signal(timestamp=datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc)),
+            [_cfd_position("AU200.fwd")],
+            0.0,
+            rules,
+        )
+        assert ok is False
+        assert "correlated" in reason
+
+    def test_cfd_forward_exposure_uses_point_value(self):
+        rules = RiskRules(
+            max_total_exposure=70_000.0,
+            block_on_existing_same_instrument=False,
+            max_correlated_positions=5,
+        )
+        ok, reason = check_signal(
+            _cfd_signal("AU200.fwd", timestamp=datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc)),
+            [_cfd_position("AU200.cash", qty=3.0)],
+            0.0,
+            rules,
+        )
+        assert ok is False
+        assert "max_total_exposure" in reason
+
+    def test_cfd_session_window_blocks_when_closed(self):
+        closed_time = datetime(2026, 4, 19, 10, 0, tzinfo=ZoneInfo("Australia/Sydney"))
+        rules = RiskRules(
+            max_total_exposure=1_000_000.0,
+            block_on_existing_same_instrument=False,
+            max_correlated_positions=5,
+        )
+        ok, reason = check_signal(
+            _cfd_signal(timestamp=closed_time),
+            [],
+            0.0,
+            rules,
+        )
+        assert ok is False
+        assert "session is closed" in reason
+
 
 # ---------------------------------------------------------------------------
 # Node
@@ -164,6 +274,25 @@ class TestRiskCheckNode:
         assert update["pending_signal"] is None
         assert update["signal_approved"] is False
         assert "Risk check blocked" in update["pending_notification"]
+
+    def test_node_uses_configured_qty_and_balance_for_cfd_margin(self):
+        configure_risk_rules(RiskRules(
+            max_total_exposure=1_000_000.0,
+            max_margin_utilization_pct=0.5,
+            block_on_existing_same_instrument=False,
+            max_correlated_positions=5,
+        ))
+        exchange = MockExchange(starting_balance=0.0)
+        exchange._balance = {"AUD": 1_000.0}
+        configure_execute(exchange, default_qty=2.0)
+        update = risk_check({
+            "pending_signal": _cfd_signal(
+                timestamp=datetime(2026, 4, 14, 0, 0, tzinfo=timezone.utc)
+            ),
+            "active_positions": [],
+        })
+        assert update["pending_signal"] is None
+        assert "required margin" in update["pending_notification"]
 
 
 # ---------------------------------------------------------------------------

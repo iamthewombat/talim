@@ -11,6 +11,7 @@ from talim.connectors.exchange.factory import (
     ExchangeConfigError,
     create_exchange,
 )
+from talim.connectors.exchange.ig_exchange import IgExchange
 from talim.connectors.exchange.mock_exchange import MockExchange
 
 
@@ -70,6 +71,16 @@ class TestCreateExchangeTestnet:
         assert ex is not None
         mock_exchange_instance.set_sandbox_mode.assert_called_once_with(True)
 
+    def test_testnet_creates_ig_demo_exchange(self, monkeypatch):
+        monkeypatch.setenv("IG_DEMO_API_KEY", "demo-api-key")
+        monkeypatch.setenv("IG_DEMO_LOGIN", "demo-user")
+        monkeypatch.setenv("IG_DEMO_PASSWORD", "demo-pass")
+
+        ex = create_exchange(mode="testnet", exchange_name="ig")
+
+        assert isinstance(ex, IgExchange)
+        assert ex.credentials.environment == "demo"
+
 
 class TestCreateExchangeLive:
     def test_live_creates_production_exchange(self, monkeypatch):
@@ -88,6 +99,16 @@ class TestCreateExchangeLive:
         assert ex is not None
         # Live mode should NOT call set_sandbox_mode
         mock_exchange_instance.set_sandbox_mode.assert_not_called()
+
+    def test_live_creates_ig_live_exchange(self, monkeypatch):
+        monkeypatch.setenv("IG_API_KEY", "live-api-key")
+        monkeypatch.setenv("IG_IDENTIFIER", "live-user")
+        monkeypatch.setenv("IG_PASSWORD", "live-pass")
+
+        ex = create_exchange(mode="live", exchange_name="ig")
+
+        assert isinstance(ex, IgExchange)
+        assert ex.credentials.environment == "live"
 
 
 # --- CcxtExchange integration (mocked ccxt responses) ---

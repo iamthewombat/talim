@@ -122,6 +122,21 @@ class TestEngine:
         assert results[0].total_trades == 0
         assert results[0].net_pnl == 0.0
 
+    def test_runs_au200_strategy_from_timeframe_file(self, tmp_path):
+        df = _sine_df()
+        inst_dir = tmp_path / "AU200.cash"
+        inst_dir.mkdir()
+        df.to_parquet(inst_dir / "1h.parquet")
+        results = run_backtest(
+            "momentum-AU200",
+            param_variants=[{}],
+            data_dir=tmp_path,
+            instrument="AU200.cash",
+            timeframe="1h",
+        )
+        assert len(results) == 1
+        assert results[0].strategy_name == "momentum-AU200"
+
 
 # ---------------------------------------------------------------------------
 # Data loader
@@ -143,6 +158,14 @@ class TestDataLoader:
             group.to_parquet(sub / f"{d.isoformat()}.parquet")
         loaded = load_ohlcv(tmp_path, "ES")
         assert len(loaded) == 48
+
+    def test_load_timeframe_specific_file(self, tmp_path):
+        df = _sine_df(100, freq="1h")
+        sub = tmp_path / "AU200.cash"
+        sub.mkdir()
+        df.to_parquet(sub / "1h.parquet")
+        loaded = load_ohlcv(tmp_path, "AU200.cash", timeframe="1h")
+        assert len(loaded) == 100
 
     def test_missing_data_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
@@ -170,6 +193,23 @@ class TestBacktestNode:
         assert update["pending_backtest"] is None
         assert isinstance(update["backtest_result"], list)
         assert update["backtest_result"][0].strategy_name == "momentum-ES"
+
+    def test_node_supports_au200_instrument_and_timeframe(self, tmp_path):
+        df = _sine_df(300, freq="1h")
+        inst_dir = tmp_path / "AU200.cash"
+        inst_dir.mkdir()
+        df.to_parquet(inst_dir / "1h.parquet")
+        req = BacktestRequest(
+            strategy_name="momentum-AU200",
+            instrument="AU200.cash",
+            timeframe="1h",
+            param_variants=[{}],
+            data_dir=str(tmp_path),
+        )
+        update = backtest_run({"pending_backtest": req})
+        assert update["pending_backtest"] is None
+        assert update["backtest_result"] is not None
+        assert update["backtest_result"][0].strategy_name == "momentum-AU200"
 
     def test_graph_cron_with_pending_backtest(self, tmp_path):
         from talim.app.entrypoints import cron_trigger

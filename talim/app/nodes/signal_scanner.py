@@ -50,6 +50,9 @@ class ScannerContext:
     def record_bar(self, bar: OHLCVBar) -> None:
         """Append a bar to the history window for its instrument."""
         hist = self._bar_history.setdefault(bar.instrument, [])
+        if hist and hist[-1].timestamp == bar.timestamp and hist[-1].timeframe == bar.timeframe:
+            hist[-1] = bar
+            return
         hist.append(bar)
         if len(hist) > self.bar_window * 4:  # keep a bit more than required
             del hist[: len(hist) - self.bar_window * 2]
@@ -117,6 +120,11 @@ def signal_scanner(state: TalimState) -> TalimState:
         return update
 
     instrument = instruments[0]
+    bars = _context.get_history(instrument)
+    if len(bars) < 20:
+        _context.price_feed.prime_history(instrument, min_bars=max(20, _context.bar_window))
+        bars = _context.get_history(instrument)
+    _context.price_feed.poll_once(instrument)
     bars = _context.get_history(instrument)
     if len(bars) < 20:
         logger.info(

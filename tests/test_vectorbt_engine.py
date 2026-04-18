@@ -30,6 +30,7 @@ def _bars(n: int = 200) -> pd.DataFrame:
 
 def test_supported_strategies_lists_both_poc_strats():
     assert "momentum-ES" in supported_strategies()
+    assert "momentum-AU200" in supported_strategies()
     assert "mean-reversion-ES" in supported_strategies()
 
 
