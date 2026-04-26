@@ -89,14 +89,14 @@ def _make_au200_trend_bars(n: int = 120) -> list[OHLCVBar]:
 
 class TestLoader:
     def test_load_momentum_es(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         assert isinstance(strategy, BaseStrategy)
-        assert strategy.name == "momentum-ES"
+        assert strategy.name == "momentum-US500"
 
     def test_load_mean_reversion_es(self):
-        strategy = load_strategy("mean-reversion-ES")
+        strategy = load_strategy("mean-reversion-US500")
         assert isinstance(strategy, BaseStrategy)
-        assert strategy.name == "mean-reversion-ES"
+        assert strategy.name == "mean-reversion-US500"
 
     def test_load_momentum_au200(self):
         strategy = load_strategy("momentum-AU200")
@@ -116,14 +116,14 @@ class TestStrategyStore:
     def test_list_strategies(self):
         store = StrategyStore()
         names = store.list_strategies()
-        assert "momentum-ES" in names
-        assert "mean-reversion-ES" in names
+        assert "momentum-US500" in names
+        assert "mean-reversion-US500" in names
         assert "momentum-AU200" in names
 
     def test_read_strategy(self):
         store = StrategyStore()
-        content = store.read("momentum-ES")
-        assert "momentum-ES" in content
+        content = store.read("momentum-US500")
+        assert "momentum-US500" in content
         assert "EMA" in content
 
     def test_read_au200_strategy(self):
@@ -154,42 +154,42 @@ class TestStrategyStore:
 
 
 # ---------------------------------------------------------------------------
-# Momentum-ES on_bar tests
+# Momentum-US500 on_bar tests
 # ---------------------------------------------------------------------------
 
-class TestMomentumES:
+class TestMomentumUS500:
     def test_generates_signals(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         bars = _make_trending_up_bars(100)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         assert len(signals) > 0, "Expected at least one signal from trending data"
 
     def test_signal_is_valid(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         bars = _make_trending_up_bars(100)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         for sig in signals:
             assert isinstance(sig, Signal)
             assert sig.instrument == "ES"
-            assert sig.strategy == "momentum-ES"
+            assert sig.strategy == "momentum-US500"
             assert sig.side in ("long", "short")
             assert sig.stop > 0
             assert sig.target > 0
 
     def test_no_signal_on_few_bars(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         bars = _make_trending_up_bars(10)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         assert len(signals) == 0, "Should not signal with insufficient data"
 
     def test_load_params(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         strategy.load_params({"ema_fast_period": 5, "ema_slow_period": 13})
         assert strategy.ema_fast_period == 5
         assert strategy.ema_slow_period == 13
 
     def test_reset(self):
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         bars = _make_trending_up_bars(50)
         for b in bars:
             strategy.on_bar(b)
@@ -203,31 +203,31 @@ class TestMomentumES:
 # Mean-Reversion-ES on_bar tests
 # ---------------------------------------------------------------------------
 
-class TestMeanReversionES:
+class TestMeanReversionUS500:
     def test_generates_signals(self):
-        strategy = load_strategy("mean-reversion-ES")
+        strategy = load_strategy("mean-reversion-US500")
         bars = _make_range_bound_bars(100)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         assert len(signals) > 0, "Expected at least one signal from range-bound data"
 
     def test_signal_is_valid(self):
-        strategy = load_strategy("mean-reversion-ES")
+        strategy = load_strategy("mean-reversion-US500")
         bars = _make_range_bound_bars(100)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         for sig in signals:
             assert isinstance(sig, Signal)
             assert sig.instrument == "ES"
-            assert sig.strategy == "mean-reversion-ES"
+            assert sig.strategy == "mean-reversion-US500"
             assert sig.side in ("long", "short")
 
     def test_no_signal_on_few_bars(self):
-        strategy = load_strategy("mean-reversion-ES")
+        strategy = load_strategy("mean-reversion-US500")
         bars = _make_range_bound_bars(15)
         signals = [s for s in (strategy.on_bar(b) for b in bars) if s is not None]
         assert len(signals) == 0
 
     def test_load_params(self):
-        strategy = load_strategy("mean-reversion-ES")
+        strategy = load_strategy("mean-reversion-US500")
         strategy.load_params({"bb_period": 15, "bb_std": 1.5})
         assert strategy.bb_period == 15
         assert strategy.bb_std == 1.5
@@ -265,8 +265,8 @@ class TestMomentumAU200:
 
 class TestParity:
     def test_on_bar_signature_matches(self):
-        momentum = load_strategy("momentum-ES")
-        mean_rev = load_strategy("mean-reversion-ES")
+        momentum = load_strategy("momentum-US500")
+        mean_rev = load_strategy("mean-reversion-US500")
         au200 = load_strategy("momentum-AU200")
 
         sig_mom = inspect.signature(momentum.on_bar)
@@ -282,8 +282,8 @@ class TestParity:
 
     def test_both_accept_same_bar(self):
         """Both strategies can process the exact same bar without error."""
-        momentum = load_strategy("momentum-ES")
-        mean_rev = load_strategy("mean-reversion-ES")
+        momentum = load_strategy("momentum-US500")
+        mean_rev = load_strategy("mean-reversion-US500")
         au200 = load_strategy("momentum-AU200")
         bar = _make_bar(5000.0)
 

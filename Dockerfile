@@ -25,6 +25,8 @@ RUN pip install --upgrade pip && \
 
 COPY talim ./talim
 COPY strategies ./strategies
+COPY config ./config
+COPY scripts ./scripts
 
 EXPOSE 8000
 

@@ -990,6 +990,32 @@ These work packages cover everything required to take Talim from a PoC with a gr
 - Manual: bring the stack up from a clean clone on a second machine using only the documented bind-mounted state/config layout.
 - Manual: restore Talim state from copied directories/backups and confirm healthcheck + bridge endpoints succeed.
 
+**Status:** Complete (2026-04-22) — `docker-compose.yml` no longer has any
+top-level `volumes:` block; the `talim-state` and `redis-data` named
+volumes were replaced with `./state` and `./redis` bind mounts, and a new
+`./backups` bind mount is shared between `talim` and `scheduler` so the
+WP-43 backup script writes onto the host filesystem. New env knobs
+`TALIM_STATE_DIR`, `TALIM_BACKUP_DIR`, and `TALIM_BACKTEST_HISTORY_DB` are
+plumbed through compose and documented in `.env.example`. The host bind
+sources `state/`, `redis/`, `backups/` are committed via `.gitkeep` (with
+`/state/*`, `/redis/*`, `/backups/*` ignored) so `git clone` produces a
+ready-to-`docker compose up` checkout. Documentation sweep removed every
+hardcoded `/Users/justinluu/...` path (now `../foo` repo-relative or
+`/path/to/talim` for placeholders). The migration runbook lives at
+`docs/vps-migration.md` and walks through provisioning a VPS (Ubuntu +
+Docker + Tailscale + UFW), `rsync`-ing `state/`/`redis/`/`backups/`/`.env`
+to the new host, `docker compose up -d --build`, and a verification
+sequence that probes `Health.Status`, `/talim/health`, `/talim/halt-status`,
+`/talim/operator/status`, `/talim/operator/decisions`,
+`/talim/operator/backtests`, and the dashboard. `docs/laptop-setup.md`
+now cross-links the migration doc. A new
+`tests/test_deployment_layout.py` (16 checks) parses
+`docker-compose.yml` and asserts: no top-level named volumes, every
+service mount source is a bind path, the WP-47 bind mounts are present,
+the bind-source dirs exist with `.gitkeep`, and `.env.example` documents
+the persistence env vars; the previous WP-43 AOF assertion was updated
+to require `./redis:/data`. 558 non-e2e tests pass.
+
 ---
 
 ## Phase 10: Broker-Agnostic CFD Core (IG-First)
@@ -1328,3 +1354,477 @@ These work packages cover everything required to take Talim from a PoC with a gr
 **Tests:**
 - Integration: shared broker-agnostic adapter tests pass for both IG and `FOREX.com` implementations.
 - Manual: end-to-end demo trade lifecycle succeeds on both brokers for the target AU index CFD path.
+
+---
+
+## Phase 13: Live Runtime Execution Wiring
+
+### WP-62 — Live Runtime Bootstrap
+
+**Goal:** Add a production composition root that turns the existing adapters,
+strategies, scanner, risk checks, execute node, and persistence into one
+configured runtime when the FastAPI bridge starts.
+
+**Deliverables:**
+- Environment-derived runtime config for exchange mode/name, price feed,
+  instruments, strategies, default quantity, bar window, checkpoint DB,
+  episodic DB, and risk config.
+- Bootstrap function that creates the selected exchange/feed, subscribes
+  instruments, loads strategy packages, configures `signal_scanner`,
+  configures `execute`, loads risk rules, and opens persistent graph
+  checkpoint/episodic databases.
+- Default `create_app()` path uses the runtime wrapper so `/talim/trigger`,
+  `/talim/resume`, and `/talim/converse` share one checkpointer.
+- Runtime seed state refreshes broker positions and account balance before
+  graph invocation.
+- Docker image includes `config/` and `scripts/`; Compose forwards runtime env
+  vars to the `talim` container.
+
+**Tests:**
+- Unit: default config is safe mock mode.
+- Unit: testnet/live require explicit instruments and strategies.
+- Unit: bootstrap wires scanner, execute, risk, feed subscriptions, strategy
+  loading, and persistent DB files.
+- Unit: seed state refreshes positions and account balance from exchange.
+- Integration: default FastAPI app bootstraps runtime when no test functions are
+  injected.
+
+**Status:** Completed on 2026-04-18.
+
+### WP-63 — Live Demo Execution Harness
+
+**Goal:** Prove the configured runtime can execute a complete paper trade loop
+before any IG/FOREX.com/Binance demo order is attempted.
+
+**Deliverables:**
+- Deterministic mock execution harness that uses `bootstrap_runtime()` rather
+  than hand-wired test-only contexts.
+- Harness flow: load bars, trigger scanner, pause at HITL, approve through
+  resume path, execute order, record episodic memory, refresh positions, and
+  run reconciliation.
+- CLI entrypoint for local smoke runs.
+- Runbook describing the mock proof and how to progress to IG/FOREX.com demo
+  execution safely.
+
+**Tests:**
+- Integration: harness completes with one order, one position, one episodic
+  decision, and zero reconciliation divergences.
+- Regression: graph/checkpoint/runtime/e2e tests still pass.
+
+**Status:** Completed on 2026-04-18.
+
+### WP-64 — OpenClaw / Operator HITL Interface
+
+**Goal:** Give OpenClaw or another operator client a narrow authenticated API
+for the live trading workflow without requiring it to understand LangGraph
+internals.
+
+**Deliverables:**
+- Operator status endpoint exposing halt state, runtime venue/feed config,
+  subscriptions, active strategies, position count, and account balance.
+- Pending-signal endpoint that reads the shared runtime checkpointer and
+  returns HITL pause state, next graph nodes, pending signal, notification, and
+  last action for a thread.
+- Decision endpoint that approves/rejects via the same runtime resume path as
+  the bridge.
+- Positions endpoint returning current broker positions.
+- Decisions endpoint returning recent episodic memory records newest first.
+- OpenClaw/operator contract documentation.
+
+**Tests:**
+- Unit/API: operator endpoints require a bootstrapped runtime.
+- Integration/API: mock runtime trigger -> pending signal -> approve -> order
+  -> position -> episodic decision through operator endpoints.
+- Integration/API: reject clears the pending signal without placing an order.
+
+**Status:** Completed on 2026-04-18.
+
+### WP-65 — Runtime Reconciliation and P&L Sync
+
+**Goal:** Keep live runtime state aligned with the broker between strategy
+scans and operator actions, without letting background maintenance disturb a
+paused HITL approval flow.
+
+**Deliverables:**
+- Persistent runtime `PnLTracker` used by seed-state and maintenance sync.
+- Authenticated `/talim/sync?thread_id=...` endpoint for scheduler/OpenClaw
+  calls.
+- Sync flow that refreshes broker positions/P&L, runs reconciliation against
+  episodic memory and checkpointed graph state, and persists safe state fields.
+- Paused-HITL protection: if the thread is waiting for approve/reject, sync
+  returns a fresh broker/P&L snapshot but does not mutate the checkpoint.
+- Cron schedule that runs sync every five minutes, offset one minute after the
+  normal scan trigger.
+- Runtime sync documentation for local deployment and OpenClaw integration.
+
+**Tests:**
+- API: `/talim/sync` requires a bootstrapped runtime.
+- Integration/API: sync skips checkpoint updates while a HITL thread is paused.
+- Integration/API: after approval, sync persists broker positions/P&L into the
+  thread checkpoint.
+- Integration/API: reconciliation divergences are returned and persisted as
+  pending notifications.
+- Regression: runtime, reconciliation, P&L tracker, bridge, and deployment
+  tests remain green.
+
+**Status:** Completed on 2026-04-18.
+
+### WP-66 — Protective Orders and Safe Exit Execution
+
+**Goal:** Ensure Talim does not enter demo broker trading with unsafe exit
+semantics or unprotected strategy entries.
+
+**Deliverables:**
+- Broker-neutral `BaseExchange.close_position(...)` helper used by the execute
+  node for exit signals.
+- Safe exit side mapping: long exits sell, short exits buy back, and exits skip
+  if no matching open position exists.
+- Strategy stop/target levels propagated from approved entry signals into
+  supported order payloads and returned `Order` metadata.
+- Mock exchange preserves stop/target levels on created positions for local
+  proof runs.
+- IG adapter sends attached `stopLevel` / `limitLevel` fields for protected
+  entries.
+- FOREX.com adapter sends `IfDone` child instructions for protected entries and
+  closes FIFO lots through a dedicated close path.
+- Demo soak documentation updated to require broker UI validation of attached
+  protection and close behaviour.
+
+**Tests:**
+- Unit: execute closes long and short positions with the correct opposite side.
+- Unit: execute skips unmatched exit signals rather than opening an opposite
+  position.
+- Unit: mock exchange stores stop/target protection on orders and positions.
+- Adapter: IG protected entries include broker-side stop/limit levels.
+- Adapter: FOREX.com protected entries include child stop/limit instructions.
+- Adapter: FOREX.com close path closes FIFO lots in order and returns one
+  canonical filled close order.
+- Regression: broker conformance and operator API tests remain green.
+
+**Status:** Completed on 2026-04-18.
+
+---
+
+## Phase 14: Strategy Authoring & Observability
+
+These packages close gaps surfaced during the post-WP-66 architecture review:
+no market data for the existing ES strategies, no persisted record of backtest
+runs, no operator-facing UI, no way to enable/disable strategies without a
+restart, no shared indicator library, and no validation of strategy parameters
+when the LLM or an operator updates them.
+
+### WP-67 — Backtest Data Strategy Decision
+
+**Goal:** Decide, once, where Talim's backtest data comes from — in-house
+Parquet ingestion or QuantConnect — without breaking the property that live
+and backtest both run through the same `BaseStrategy.on_bar` contract. This
+WP produces the decision and the constraints; WP-73 executes on it.
+
+**Deliverables:**
+- `docs/backtest-data-strategy.md` containing:
+  - Coverage matrix of each declared strategy (`momentum-ES`,
+    `mean-reversion-ES`, `momentum-AU200`, plus any planned RSI/MACD
+    strategies) against currently available datasets.
+  - Pricing, licensing, and access-method comparison for candidate data
+    sources: IG historical, FOREX.com historical, Polygon, Databento,
+    QuantConnect (LEAN + data library).
+  - Explicit QuantConnect go/no-go, including a section on *what would have
+    to change in the strategy contract* (e.g. `on_bar` vs QC's event model)
+    and whether that is acceptable.
+  - Chosen path, rationale, estimated recurring cost, and the contract
+    invariants WP-73 must preserve (same strategy code drives live + backtest).
+  - A short list of follow-up data sources we are *not* doing now but would
+    revisit (e.g. tick data, options chains).
+- No code in this WP — only the decision and its constraints.
+
+**Tests:**
+- N/A (documentation-only WP). Reviewed by reading the doc.
+
+**Status:** Completed on 2026-04-19. Decision: IG + FOREX.com historical
+REST as primary; no QuantConnect (breaks the single-strategy-contract
+invariant); rename `-ES` strategies to `-US500`; see
+`docs/backtest-data-strategy.md`.
+
+---
+
+### WP-68 — Backtest Run History & Query API
+
+**Goal:** Make every backtest a first-class, queryable artefact so parameter
+tuning is actually trackable over time, rather than ephemeral console output.
+
+**Deliverables:**
+- New `backtest_runs` table in a dedicated SQLite store under `state/`
+  (schema: `id, created_at, strategy, instrument, timeframe, engine,
+  param_variant JSON, matched_dates JSON, net_pnl, sharpe_ratio, max_drawdown,
+  win_rate, total_trades, notes, triggered_by`).
+- `talim/backtest/history.py` with `record_run(result, request, trigger)` and
+  query helpers (`list_runs`, `get_run`, filter by strategy/instrument/date).
+- `talim/backtest/engine.py` and `talim/app/nodes/backtest_run.py` write to
+  history on every run (CLI, LLM-triggered, or operator-triggered).
+- `scripts/run_backtest.py` writes to history and prints the new run id.
+- Operator endpoints: `GET /talim/operator/backtests` (filters + pagination),
+  `GET /talim/operator/backtests/{id}`.
+- Migration helper so an existing deployment bootstraps the new table.
+
+**Tests:**
+- Unit: `record_run` round-trip, ordering, filter correctness.
+- Integration: `run_backtest(...)` persists a row; `backtest_run` graph node
+  persists a row; CLI persists a row.
+- API: operator endpoints return rows with correct auth + shape.
+- Regression: existing backtest engine, node, and CLI tests remain green.
+
+**Status:** Completed 2026-04-19. `talim/backtest/history.py` implements the
+`backtest_runs` schema at `state/backtest_history.db` (path overridable via
+`TALIM_BACKTEST_HISTORY_DB`). Engine stays pure — recording happens in the
+callers: `scripts/run_backtest.py` writes each variant on completion and
+prints `run_ids`, and the `backtest_run` graph node records via the default
+history path with `triggered_by="node"`. Runtime exposes `operator_backtests`
+and `operator_backtest`; the bridge adds `GET /talim/operator/backtests`
+(strategy / instrument / triggered_by / since filters, pagination clamped to
+1..200) and `GET /talim/operator/backtests/{id}` (404 on missing id) under
+shared-secret auth. 13 new tests in `tests/test_backtest_history.py`; full
+519-test suite green.
+
+---
+
+### WP-69 — Operator Monitoring Dashboard
+
+**Goal:** Give the operator a single screen for "what is Talim doing right
+now" without needing curl or OpenClaw, built entirely on existing authenticated
+endpoints.
+
+**Deliverables:**
+- Lightweight web UI (single-page, static assets served by the bridge or a
+  sibling container — no framework sprawl) with panels for:
+  - Runtime status (instruments, strategies, halted, account balance).
+  - Open positions with live P&L.
+  - Pending HITL signal with approve/reject buttons.
+  - Recent decisions (filterable by instrument/strategy).
+  - Backtest run history (from WP-68) with per-run drill-in.
+  - Daily P&L snapshot.
+- Auth: reuses the existing shared-secret header; config via env var so the
+  operator supplies the secret once at load.
+- Read-only by default; approve/reject and halt require an explicit "unlock"
+  toggle that persists only for the session.
+- `docs/operator-dashboard.md` runbook covering local + VPS deployment.
+
+**Tests:**
+- API: a Playwright/HTTP smoke test that loads the dashboard, confirms panels
+  render data from a mocked runtime, and that approve/reject flows through
+  the existing operator endpoints.
+- Unit: any client-side helpers (formatting, polling cadence).
+- Regression: bridge + operator endpoints untouched.
+
+**Status:** Complete (2026-04-19) — static single-page dashboard served by
+the bridge at `/talim/dashboard/` via
+`StaticFiles(directory=talim/api/static, html=True)`. No framework; plain
+`index.html` + `app.js` + `style.css`. Panels implemented: runtime status
+(exchange/pricefeed/instruments/strategies/subscriptions/balance + HALT
+button), open positions (with per-position open P&L), pending HITL with
+approve/reject, strategies (enable/disable), recent decisions (filter by
+instrument/strategy/limit), backtest history with click-to-drill-in
+detail view, daily + open P&L. Auth is two-step: paste
+`TALIM_BRIDGE_SECRET` to stash it in `sessionStorage` (unlocks reads),
+then click *Unlock writes* to arm approve/reject/halt/strategy-toggle
+buttons via an in-memory flag that resets on page refresh. Extended
+`Runtime.operator_status()` to surface `open_pnl` / `daily_pnl` from the
+existing `_safe_pnl_snapshot` path (no broker side effects). 4 new smoke
+tests in `tests/test_bridge.py::TestOperatorDashboard` confirming the
+HTML shell is public, assets serve with correct content types, and
+operator endpoints still 401 without the secret. Runbook at
+`docs/operator-dashboard.md` covers routes, auth model, local +
+docker-compose invocation, and extension points. No nginx config change
+needed — existing `/talim/` proxy covers the dashboard.
+
+---
+
+### WP-70 — Hot Strategy Activation Controls
+
+**Goal:** Enable/disable strategies at runtime without restarting the stack,
+while preserving any in-flight HITL thread that a disabled strategy already
+produced.
+
+**Deliverables:**
+- Runtime APIs on `Runtime` / scanner context for `enable_strategy(name)` and
+  `disable_strategy(name)` that mutate the active set, rebind the scanner's
+  strategy registry, and update the checkpointed `TalimState.active_strategies`.
+- Operator endpoints: `POST /talim/operator/strategies/{name}/enable`,
+  `POST /talim/operator/strategies/{name}/disable`, `GET
+  /talim/operator/strategies` (includes loadable-but-inactive strategies by
+  scanning `strategies/`).
+- Disable semantics: stops producing new signals, but an already-pending HITL
+  signal from that strategy remains resumable until approved/rejected.
+- Episodic audit: every enable/disable recorded with actor + timestamp.
+- `docs/strategy-activation.md` covering safe toggling during an open position.
+
+**Tests:**
+- Unit: enable/disable updates scanner registry and state.
+- Integration: a disabled strategy does not emit new signals on the next scan.
+- Integration: disabling a strategy with a pending HITL signal does not
+  clear that signal; operator can still approve/reject.
+- API: operator endpoints require auth, return current state, reject unknown
+  strategy names.
+- Regression: runtime bootstrap and scanner tests remain green.
+
+**Status:** Completed 2026-04-19. `Runtime._active_strategies` is the
+authoritative in-process toggle set (seeded from config). `enable_strategy`
+validates by loading the module first (fail-fast, no audit row on failure);
+`disable_strategy` removes from the active list but never touches
+`pending_signal`. Activations logged to a new `strategy_activations` table
+via `EpisodicMemory.record_activation` (noop reenables/redisables still
+produce an audit row). `_discover_strategies()` enumerates every
+`strategies/*/strategy.py` for the operator listing. Bridge exposes
+`GET /talim/operator/strategies`, `POST /talim/operator/strategies/{name}/enable`
+(404 on unknown), and `POST /talim/operator/strategies/{name}/disable`. Scanner
+now distinguishes `active_strategies=[]` (disable-all) from absent key. 12
+new tests in `tests/test_strategy_activation.py`; full 531-test suite green.
+Runbook: `docs/strategy-activation.md`.
+
+---
+
+### WP-71 — Shared Indicator Library
+
+**Goal:** Stop hand-rolling indicator math in every strategy, so adding new
+strategies (e.g. RSI mean-reversion, MACD momentum) is a composition task, not
+a re-implementation task.
+
+**Deliverables:**
+- `talim/strategy/indicators/` package with pure, stateless functions and
+  small stateful "streaming" wrappers for bar-by-bar use:
+  - `ema`, `sma`, `atr`, `rsi` (Wilder), `macd`, `stochastic`, `bollinger`,
+    `donchian`.
+- Each indicator exposes both a vectorised form (pandas/numpy) and a
+  streaming form (`update(bar) -> value | None`) so live and backtest share
+  the implementation.
+- Refactor existing strategies (`momentum-ES`, `mean-reversion-ES`,
+  `momentum-AU200`) to consume the library instead of inline math, with
+  identical numerical behaviour verified by tests.
+- `docs/strategy-authoring.md` covering how to pick and wire indicators.
+
+**Tests:**
+- Unit: each indicator — known-value fixtures, NaN handling on warm-up,
+  streaming/vectorised parity.
+- Regression: existing strategy unit tests and AU200 baseline backtest
+  produce the same metrics as before the refactor (within float tolerance).
+
+**Status:** Completed on 2026-04-19. 8 indicators shipped (EMA, SMA,
+Wilder ATR, Wilder RSI, Bollinger, MACD, stochastic, Donchian); all three
+existing strategies refactored through the library; `load_params` rebuilds
+indicator streams when periods change; 25 new indicator tests plus full
+492-test non-e2e regression green; AU200 baseline metrics unchanged.
+
+---
+
+### WP-72 — Strategy Parameter Schema & Validated Loading
+
+**Goal:** Stop accepting arbitrary `setattr` into strategies when the LLM or
+operator updates parameters; reject invalid values at the boundary with a
+clear error instead of silently mis-running the strategy.
+
+**Deliverables:**
+- Declarative parameter schema on `BaseStrategy`: each strategy declares
+  `PARAMS = [ParamSpec(name, type, default, min=..., max=..., choices=...,
+  description=...)]` (or equivalent Pydantic model).
+- `BaseStrategy.load_params(dict)` validates against the schema, coerces
+  types, and raises a typed `StrategyParamError` on violations.
+- `talim/app/nodes/strategy_update.py` surfaces validation errors back to
+  the LLM/converse flow as a rejection with the reason.
+- Backtest CLI and `BacktestRequest` validate `param_variants` up front.
+- Operator endpoint `GET /talim/operator/strategies/{name}/params` returns
+  the schema + current values so the dashboard can render a form.
+- Each existing strategy migrates to the schema with its current defaults.
+
+**Tests:**
+- Unit: valid params load; invalid types/ranges/choices raise
+  `StrategyParamError` with a useful message.
+- Unit: schema introspection returns the declared specs.
+- Integration: LLM strategy-update flow routes a bad proposal to notify
+  instead of mutating the strategy.
+- Integration: backtest CLI exits non-zero on invalid params.
+- Regression: existing strategy, backtest, and update-node tests remain green.
+
+**Status:** Completed on 2026-04-19. `ParamSpec` + `StrategyParamError` in
+`talim/strategy/params.py`; `BaseStrategy.load_params` validates against
+declared `PARAMS`; all three existing strategies carry schemas; backtest
+engine pre-validates variants before loading data; `scripts/run_backtest.py`
+exits 2 on invalid params; `strategy_update` node rejects invalid LLM
+proposals with a reason in `pending_notification`; new
+`GET /talim/operator/strategies/{name}/params` returns schema + current
+values; 25 new tests plus 517-test non-e2e regression green; AU200 baseline
+metrics unchanged.
+
+---
+
+### WP-73 — US500 Rename, Ingest & Baseline Backtest
+
+**Goal:** Execute on the WP-67 decision. Rename the existing `-ES`
+strategies to `-US500` (they were never tradeable on our live CFD rails),
+register US500.cash in the CFD registry, ingest IG historical 5m + 1h
+bars, and record a real baseline backtest for both strategies so future
+parameter sweeps have a reference point.
+
+**Blocked on:** WP-67 (done). **Related:** WP-68 — if it has shipped,
+baselines land in `backtest_runs`; otherwise commit metrics under
+`docs/backtest-baselines/`.
+
+**Deliverables:**
+- Rename `strategies/momentum-ES/` → `strategies/momentum-US500/` and
+  `strategies/mean-reversion-ES/` → `strategies/mean-reversion-US500/`.
+  Update:
+  - Class names and `name` property returns.
+  - Companion `.md` doc filenames and bodies.
+  - Vectorbt translator keys in `talim/backtest/vectorbt_engine.py`.
+  - Test fixtures and any `"momentum-ES"` / `"mean-reversion-ES"`
+    string references across `tests/`, `scripts/`, `docs/`, and env
+    examples.
+  - Strategy-store loader behaviour if anything is cached by old name.
+- Resolve US500 IG market via `scripts/ig_market_discovery.py`; capture
+  the epic and contract metadata.
+- Add a `US500.cash` entry to `config/cfd_instruments.json` with IG
+  venue mapping, session (NYSE/CME equity-index hours), point value, and
+  margin rate. FOREX.com mapping is deferred.
+- Ingest IG historical 5m and 1h bars via `scripts/ingest_ig_prices.py`
+  into `data/ig/US500.cash/{5m,1h}.parquet` + `dataset-manifest.json`.
+  Chunk-append as needed to get 3+ years where IG permits.
+- Harden `scripts/run_backtest.py`: fail loudly (non-zero exit, clear
+  message) when an instrument/timeframe has no data. No silent empty
+  runs, for any instrument.
+- Baseline backtest run for `momentum-US500` and `mean-reversion-US500`
+  at default parameters, metrics recorded (P&L, Sharpe, max DD, win rate,
+  trade count). Landed in `backtest_runs` if WP-68 is live, otherwise in
+  `docs/backtest-baselines/us500.md`.
+- `docs/backtest-us500-runbook.md` covering how to reproduce the baseline
+  from a clean checkout.
+
+**Tests:**
+- Unit: data loader rejects missing instrument/timeframe with a helpful
+  error.
+- Unit: manifest round-trip on the new US500 dataset (ingest → read →
+  metrics).
+- Unit: renamed strategies load by new name; old name returns a
+  descriptive error.
+- Integration: `momentum-US500` backtest on ingested data produces
+  non-empty, non-zero-trade metrics.
+- Integration: `mean-reversion-US500` backtest likewise.
+- Regression: AU200 dataset and backtests remain green; all existing
+  non-e2e tests remain green.
+
+**Status:** Complete (2026-04-19). Strategies renamed across code,
+tests, vectorbt translator, demo harness, docs, and architecture doc
+(PROGRESS.md and this file retain their historical session-log entries).
+`US500.cash` resolved against IG demo (`IX.D.SPTRD.IFA.IP`, US 500 Cash
+A$1) and FOREX.com demo (`404706660`, US SP 500 CFD); both venue
+mappings added to `config/cfd_instruments.json`. Ingested 4000 × 1h
+(~8 months) + 4000 × 5m (~2.5 weeks) from FOREX.com into
+`data/forexcom/US500.cash/` because the IG weekly historical-data
+allowance was exhausted on the day; this is noted in the runbook so
+IG data can be cross-verified after the allowance resets. Added
+`scripts/ingest_forexcom_prices.py`. Hardened
+`talim/backtest/data_loader.load_ohlcv` and the
+`scripts/run_backtest.py` CLI: explicit `--timeframe` must resolve to
+an existing file (no silent fallback), empty parquets raise, CLI
+requires `--instrument`, errors exit 2 with clear messages, and a
+zero-trade run prints a warning. Default-parameter baselines captured
+for all four strategy × timeframe combinations and committed to
+`docs/backtest-baselines/us500-2026-04-19.json`; reproduction procedure
+in `docs/backtest-us500-runbook.md`.

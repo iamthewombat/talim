@@ -31,6 +31,8 @@ class MockExchange(BaseExchange):
         order_type: str = "market",
         limit_price: float | None = None,
         strategy: str = "",
+        stop_price: float | None = None,
+        target_price: float | None = None,
     ) -> Order:
         if side not in ("buy", "sell"):
             raise ValueError(f"Invalid side: {side}")
@@ -47,6 +49,8 @@ class MockExchange(BaseExchange):
             limit_price=limit_price,
             status=OrderStatus.OPEN,
             strategy=strategy,
+            stop_price=stop_price,
+            target_price=target_price,
         )
 
         # Market orders fill instantly
@@ -74,17 +78,26 @@ class MockExchange(BaseExchange):
                 # Closed out
                 del self._positions[instrument]
             else:
+                flips_side = (current_signed > 0 > new_signed) or (current_signed < 0 < new_signed)
                 pos.side = "long" if new_signed > 0 else "short"
                 pos.qty = abs(new_signed)
                 pos.entry_price = fill_price  # simplified — real exchanges do weighted avg
+                if flips_side:
+                    pos.stop = order.stop_price or 0.0
+                    pos.target = order.target_price or 0.0
+                else:
+                    if order.stop_price is not None:
+                        pos.stop = order.stop_price
+                    if order.target_price is not None:
+                        pos.target = order.target_price
         else:
             self._positions[instrument] = Position(
                 instrument=instrument,
                 side="long" if signed_qty > 0 else "short",
                 qty=abs(signed_qty),
                 entry_price=fill_price,
-                stop=0.0,
-                target=0.0,
+                stop=order.stop_price or 0.0,
+                target=order.target_price or 0.0,
                 strategy=order.strategy,
                 entry_time=order.fill_time,
                 position_id=order.order_id,

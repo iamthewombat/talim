@@ -5,6 +5,8 @@ from __future__ import annotations
 from talim.models.bar import OHLCVBar
 from talim.models.signal import Signal
 from talim.strategy.base import BaseStrategy
+from talim.strategy.indicators import AtrStream, EmaStream
+from talim.strategy.params import ParamSpec
 
 
 class MomentumAU200(BaseStrategy):
@@ -17,110 +19,93 @@ class MomentumAU200(BaseStrategy):
     atr_multiplier_target: float = 2.8
     min_ema_gap_atr: float = 0.12
 
+    PARAMS = [
+        ParamSpec("ema_fast_period", int, 13, min=2, max=200,
+                  description="Fast EMA lookback in bars"),
+        ParamSpec("ema_slow_period", int, 34, min=2, max=500,
+                  description="Slow EMA lookback in bars; must be > ema_fast_period"),
+        ParamSpec("atr_period", int, 14, min=2, max=200,
+                  description="ATR lookback in bars"),
+        ParamSpec("atr_multiplier_stop", float, 1.6, min=0.1, max=20.0,
+                  description="Stop distance as a multiple of ATR"),
+        ParamSpec("atr_multiplier_target", float, 2.8, min=0.1, max=20.0,
+                  description="Take-profit distance as a multiple of ATR"),
+        ParamSpec("min_ema_gap_atr", float, 0.12, min=0.0, max=5.0,
+                  description="Minimum EMA separation in ATR units required to fire a signal"),
+    ]
+
     def __init__(self) -> None:
-        self._closes: list[float] = []
-        self._ema_fast: float | None = None
-        self._ema_slow: float | None = None
-        self._prev_ema_fast: float | None = None
-        self._prev_ema_slow: float | None = None
-        self._atr: float = 0.0
+        self._init_indicators()
+
+    def _init_indicators(self) -> None:
+        self._bars_seen = 0
+        self._ema_fast = EmaStream(self.ema_fast_period)
+        self._ema_slow = EmaStream(self.ema_slow_period)
+        self._atr = AtrStream(period=self.atr_period)
+        self._prev_fast: float | None = None
+        self._prev_slow: float | None = None
 
     @property
     def name(self) -> str:
         return "momentum-AU200"
 
     def reset(self) -> None:
-        self._closes.clear()
-        self._ema_fast = None
-        self._ema_slow = None
-        self._prev_ema_fast = None
-        self._prev_ema_slow = None
-        self._atr = 0.0
+        self._init_indicators()
 
-    @staticmethod
-    def _update_ema(value: float, prev_ema: float | None, period: int) -> float:
-        if prev_ema is None:
-            return value
-        k = 2.0 / (period + 1)
-        return value * k + prev_ema * (1 - k)
-
-    def _update_atr(self, bar: OHLCVBar, prev_close: float | None) -> float:
-        if prev_close is None:
-            tr = bar.high - bar.low
-        else:
-            tr = max(
-                bar.high - bar.low,
-                abs(bar.high - prev_close),
-                abs(bar.low - prev_close),
-            )
-        if self._atr == 0.0:
-            return tr
-        k = 1.0 / self.atr_period
-        return tr * k + self._atr * (1 - k)
+    def load_params(self, params: dict) -> None:
+        super().load_params(params)
+        self._init_indicators()
 
     def on_bar(self, bar: OHLCVBar) -> Signal | None:
-        prev_close = self._closes[-1] if self._closes else None
-        self._closes.append(bar.close)
+        self._bars_seen += 1
+        atr = self._atr.update(bar.high, bar.low, bar.close)
+        self._prev_fast = self._ema_fast.value
+        self._prev_slow = self._ema_slow.value
+        fast = self._ema_fast.update(bar.close)
+        slow = self._ema_slow.update(bar.close)
 
-        self._atr = self._update_atr(bar, prev_close)
-        self._prev_ema_fast = self._ema_fast
-        self._prev_ema_slow = self._ema_slow
-        self._ema_fast = self._update_ema(bar.close, self._ema_fast, self.ema_fast_period)
-        self._ema_slow = self._update_ema(bar.close, self._ema_slow, self.ema_slow_period)
-
-        if len(self._closes) < self.ema_slow_period:
+        if self._bars_seen < self.ema_slow_period:
             return None
 
-        if self._ema_fast is None or self._ema_slow is None:
-            return None
-        ema_gap = abs(self._ema_fast - self._ema_slow)
-        if self._atr > 0 and ema_gap < self.min_ema_gap_atr * self._atr:
+        ema_gap = abs(fast - slow)
+        if atr > 0 and ema_gap < self.min_ema_gap_atr * atr:
             return None
 
-        if (
-            self._prev_ema_fast is not None
-            and self._prev_ema_slow is not None
-            and self._prev_ema_fast <= self._prev_ema_slow
-            and self._ema_fast > self._ema_slow
-        ):
-            stop = bar.close - self._atr * self.atr_multiplier_stop
-            target = bar.close + self._atr * self.atr_multiplier_target
-            return Signal(
-                instrument=bar.instrument,
-                strategy=self.name,
-                side="long",
-                entry_price=bar.close,
-                stop=round(stop, 2),
-                target=round(target, 2),
-                rationale=(
-                    f"EMA({self.ema_fast_period}) crossed above "
-                    f"EMA({self.ema_slow_period}) with ATR-backed separation"
-                ),
-                regime_context="trend",
-                timestamp=bar.timestamp,
-            )
+        if self._prev_fast is not None and self._prev_slow is not None:
+            if self._prev_fast <= self._prev_slow and fast > slow:
+                stop = bar.close - atr * self.atr_multiplier_stop
+                target = bar.close + atr * self.atr_multiplier_target
+                return Signal(
+                    instrument=bar.instrument,
+                    strategy=self.name,
+                    side="long",
+                    entry_price=bar.close,
+                    stop=round(stop, 2),
+                    target=round(target, 2),
+                    rationale=(
+                        f"EMA({self.ema_fast_period}) crossed above "
+                        f"EMA({self.ema_slow_period}) with ATR-backed separation"
+                    ),
+                    regime_context="trend",
+                    timestamp=bar.timestamp,
+                )
 
-        if (
-            self._prev_ema_fast is not None
-            and self._prev_ema_slow is not None
-            and self._prev_ema_fast >= self._prev_ema_slow
-            and self._ema_fast < self._ema_slow
-        ):
-            stop = bar.close + self._atr * self.atr_multiplier_stop
-            target = bar.close - self._atr * self.atr_multiplier_target
-            return Signal(
-                instrument=bar.instrument,
-                strategy=self.name,
-                side="short",
-                entry_price=bar.close,
-                stop=round(stop, 2),
-                target=round(target, 2),
-                rationale=(
-                    f"EMA({self.ema_fast_period}) crossed below "
-                    f"EMA({self.ema_slow_period}) with ATR-backed separation"
-                ),
-                regime_context="trend",
-                timestamp=bar.timestamp,
-            )
+            if self._prev_fast >= self._prev_slow and fast < slow:
+                stop = bar.close + atr * self.atr_multiplier_stop
+                target = bar.close - atr * self.atr_multiplier_target
+                return Signal(
+                    instrument=bar.instrument,
+                    strategy=self.name,
+                    side="short",
+                    entry_price=bar.close,
+                    stop=round(stop, 2),
+                    target=round(target, 2),
+                    rationale=(
+                        f"EMA({self.ema_fast_period}) crossed below "
+                        f"EMA({self.ema_slow_period}) with ATR-backed separation"
+                    ),
+                    regime_context="trend",
+                    timestamp=bar.timestamp,
+                )
 
         return None

@@ -145,7 +145,7 @@ class TestLoadValidatedConfig:
 
 def _signal() -> Signal:
     return Signal(
-        instrument="ES", strategy="momentum-ES", side="long",
+        instrument="ES", strategy="momentum-US500", side="long",
         entry_price=5000.0, stop=4980.0, target=5030.0,
         rationale="test", regime_context="momentum",
     )

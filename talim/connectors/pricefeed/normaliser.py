@@ -159,6 +159,54 @@ class SnapshotBarBuilder:
         return self._current.pop(instrument, None)
 
 
+def normalise_forexcom_price_bar(
+    payload: dict[str, Any],
+    *,
+    instrument: str,
+    timeframe: str = "5m",
+) -> OHLCVBar:
+    """Convert a FOREX.com `/market/{id}/barhistory` entry to an OHLCVBar.
+
+    FOREX.com bar shape::
+
+        {"BarDate": "/Date(1776458400000)/", "Open": 9026.2, ..., "Volume": 5.0}
+    """
+
+    bar_date = payload.get("BarDate")
+    if not isinstance(bar_date, str) or not bar_date.startswith("/Date("):
+        raise ValueError("FOREX.com bar payload missing /Date(...) BarDate")
+    ms = _parse_dotnet_ms(bar_date)
+    if ms is None:
+        raise ValueError(f"cannot parse FOREX.com BarDate {bar_date!r}")
+    return OHLCVBar(
+        instrument=instrument,
+        timestamp=datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc),
+        open=float(payload["Open"]),
+        high=float(payload["High"]),
+        low=float(payload["Low"]),
+        close=float(payload["Close"]),
+        volume=float(payload.get("Volume") or 0.0),
+        timeframe=timeframe,
+    )
+
+
+def _parse_dotnet_ms(value: str) -> int | None:
+    start = value.find("(")
+    end = value.find(")")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    body = value[start + 1 : end]
+    for sep in ("+", "-"):
+        idx = body.find(sep, 1)
+        if idx > 0:
+            body = body[:idx]
+            break
+    try:
+        return int(body)
+    except ValueError:
+        return None
+
+
 def normalise_ig_snapshot(
     payload: dict[str, Any],
     *,

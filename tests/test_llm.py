@@ -14,18 +14,18 @@ from talim.llm.mock import MockLLMClient
 class TestPrompts:
     def test_strategy_reasoning_includes_fields(self):
         p = prompts.strategy_reasoning_prompt(
-            "momentum-ES",
+            "momentum-US500",
             current_params={"ema_fast_period": 8, "ema_slow_period": 21},
             regime="momentum",
         )
-        assert "momentum-ES" in p
+        assert "momentum-US500" in p
         assert "ema_fast_period" in p
         assert "momentum" in p
         assert "JSON" in p
 
     def test_strategy_reasoning_with_backtest_results(self):
         p = prompts.strategy_reasoning_prompt(
-            "momentum-ES",
+            "momentum-US500",
             current_params={},
             regime="momentum",
             backtest_results=[

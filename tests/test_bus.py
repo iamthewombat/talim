@@ -61,7 +61,7 @@ class TestEventSerialisation:
     def test_signal_event_roundtrip(self):
         event = SignalEvent(
             instrument="ES",
-            strategy="momentum-ES",
+            strategy="momentum-US500",
             side="long",
             entry_price=5400.0,
             stop=5380.0,
@@ -71,13 +71,13 @@ class TestEventSerialisation:
         )
         d = event.to_dict()
         restored = SignalEvent.from_dict(d)
-        assert restored.strategy == "momentum-ES"
+        assert restored.strategy == "momentum-US500"
         assert restored.entry_price == 5400.0
 
     def test_trade_event_roundtrip(self):
         event = TradeEvent(
             instrument="ES",
-            strategy="momentum-ES",
+            strategy="momentum-US500",
             side="long",
             qty=2.0,
             fill_price=5401.0,

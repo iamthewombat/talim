@@ -29,13 +29,13 @@ def _bars(n: int = 200) -> pd.DataFrame:
 
 
 def test_supported_strategies_lists_both_poc_strats():
-    assert "momentum-ES" in supported_strategies()
+    assert "momentum-US500" in supported_strategies()
     assert "momentum-AU200" in supported_strategies()
-    assert "mean-reversion-ES" in supported_strategies()
+    assert "mean-reversion-US500" in supported_strategies()
 
 
 def test_request_engine_field_default():
-    req = BacktestRequest(strategy_name="momentum-ES")
+    req = BacktestRequest(strategy_name="momentum-US500")
     assert req.engine == "on_bar"
 
 
@@ -53,7 +53,7 @@ def test_unavailable_falls_back_to_on_bar_in_node():
     from talim.app.nodes.backtest_run import backtest_run
 
     req = BacktestRequest(
-        strategy_name="momentum-ES",
+        strategy_name="momentum-US500",
         param_variants=[{"ema_fast_period": 8}],
         engine="vectorbt",
     )
@@ -61,7 +61,7 @@ def test_unavailable_falls_back_to_on_bar_in_node():
     # Either path must populate backtest_result without raising.
     assert "backtest_result" in state
     if state["backtest_result"] is not None:
-        assert state["backtest_result"][0].strategy_name == "momentum-ES"
+        assert state["backtest_result"][0].strategy_name == "momentum-US500"
 
 
 @pytest.mark.skipif(not vectorbt_available(), reason="vectorbt not installed")
@@ -73,10 +73,10 @@ def test_vectorbt_runs_and_produces_metrics():
     crossover-only entry/exit translation with no stop/target concept.
     """
     df = _bars(300)
-    vb = run_vectorbt_backtest("momentum-ES", param_variants=[{}], df=df)
+    vb = run_vectorbt_backtest("momentum-US500", param_variants=[{}], df=df)
     assert len(vb) == 1
-    assert vb[0].strategy_name == "momentum-ES"
+    assert vb[0].strategy_name == "momentum-US500"
     assert vb[0].total_trades >= 0
     # Both engines should be runnable on the same df without raising.
-    ob = run_backtest("momentum-ES", param_variants=[{}], df=df)
-    assert ob[0].strategy_name == "momentum-ES"
+    ob = run_backtest("momentum-US500", param_variants=[{}], df=df)
+    assert ob[0].strategy_name == "momentum-US500"

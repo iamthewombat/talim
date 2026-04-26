@@ -67,13 +67,21 @@ class CcxtExchange(BaseExchange):
         order_type: str = "market",
         limit_price: float | None = None,
         strategy: str = "",
+        stop_price: float | None = None,
+        target_price: float | None = None,
     ) -> Order:
+        params = {}
+        if stop_price is not None:
+            params["stopLoss"] = {"triggerPrice": stop_price}
+        if target_price is not None:
+            params["takeProfit"] = {"triggerPrice": target_price}
         response = self._client.create_order(
             symbol=instrument,
             type=order_type,
             side=side,
             amount=qty,
             price=limit_price,
+            params=params,
         )
         status_str = response.get("status", "open")
         status_map = {
@@ -93,6 +101,8 @@ class CcxtExchange(BaseExchange):
             fill_price=response.get("average"),
             fill_time=datetime.now(tz=timezone.utc) if status_str == "closed" else None,
             strategy=strategy,
+            stop_price=stop_price,
+            target_price=target_price,
         )
 
     def cancel_order(self, order_id: str) -> bool:

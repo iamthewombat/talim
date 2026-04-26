@@ -148,6 +148,18 @@ def reconcile_positions(
     return repairs
 
 
+def format_repair_notification(repairs: list[RepairEvent]) -> str | None:
+    """Format reconciliation divergences for operator-facing notifications."""
+    if not repairs:
+        return None
+    lines = [f"Reconciliation found {len(repairs)} divergence(s):"]
+    for repair in repairs:
+        lines.append(
+            f"  [{repair.kind}] {repair.instrument}: {repair.detail}"
+        )
+    return "\n".join(lines)
+
+
 def reconcile(state: TalimState) -> TalimState:
     """LangGraph node that runs reconciliation and surfaces divergences.
 
@@ -171,10 +183,7 @@ def reconcile(state: TalimState) -> TalimState:
         logger.info("reconcile: no divergences found")
         return update
 
-    lines = [f"Reconciliation found {len(repairs)} divergence(s):"]
-    for r in repairs:
-        lines.append(f"  [{r.kind}] {r.instrument}: {r.detail}")
-    msg = "\n".join(lines)
+    msg = format_repair_notification(repairs)
 
     logger.warning(msg)
     update["pending_notification"] = msg

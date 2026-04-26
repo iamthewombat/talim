@@ -29,7 +29,7 @@ def _insert_decisions(mem: EpisodicMemory, n: int = 50) -> None:
         mem.record_decision(
             timestamp=f"2025-06-{(i % 28) + 1:02d}T09:30:00",
             instrument="ES" if i % 2 == 0 else "NQ",
-            strategy="momentum-ES" if i % 3 != 0 else "mean-reversion-ES",
+            strategy="momentum-US500" if i % 3 != 0 else "mean-reversion-US500",
             side="long" if i % 2 == 0 else "short",
             entry_price=5000.0 + i,
             stop=4980.0 + i,
@@ -66,7 +66,7 @@ class TestEpisodicMemory:
             mem.record_decision(
                 timestamp="2025-06-15T09:30:00",
                 instrument="ES",
-                strategy="momentum-ES",
+                strategy="momentum-US500",
                 side="long",
                 entry_price=5000.0,
                 stop=4980.0,
@@ -112,7 +112,7 @@ class TestEpisodicMemory:
             conn.execute(
                 "INSERT INTO decisions (timestamp, instrument, strategy, side, "
                 "entry_price, stop, target) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("2025-06-15T09:30:00", "ES", "momentum-ES", "long", 5000.0, 4980.0, 5040.0),
+                ("2025-06-15T09:30:00", "ES", "momentum-US500", "long", 5000.0, 4980.0, 5040.0),
             )
             conn.commit()
             conn.close()
@@ -150,9 +150,9 @@ class TestEpisodicMemory:
         with tempfile.TemporaryDirectory() as tmp:
             mem = _make_episodic(tmp)
             _insert_decisions(mem, 50)
-            results = mem.query_decisions(strategy="momentum-ES")
+            results = mem.query_decisions(strategy="momentum-US500")
             assert len(results) > 0
-            assert all(r["strategy"] == "momentum-ES" for r in results)
+            assert all(r["strategy"] == "momentum-US500" for r in results)
             mem.close()
 
     def test_query_by_date_range(self):
@@ -172,7 +172,7 @@ class TestEpisodicMemory:
         with tempfile.TemporaryDirectory() as tmp:
             mem = _make_episodic(tmp)
             _insert_decisions(mem, 50)
-            stats = mem.get_stats("momentum-ES")
+            stats = mem.get_stats("momentum-US500")
             assert stats["total_decisions"] > 0
             assert "wins" in stats
             assert "losses" in stats
@@ -186,7 +186,7 @@ class TestEpisodicMemory:
             row_id = mem.record_decision(
                 timestamp="2025-06-15T09:30:00",
                 instrument="ES",
-                strategy="momentum-ES",
+                strategy="momentum-US500",
                 side="long",
                 entry_price=5000.0,
                 stop=4980.0,
@@ -213,7 +213,7 @@ class TestEpisodicMemory:
                         mem.record_decision(
                             timestamp=f"2025-06-15T09:{thread_id:02d}:{i:02d}",
                             instrument="ES",
-                            strategy="momentum-ES",
+                            strategy="momentum-US500",
                             side="long",
                             entry_price=5000.0 + i,
                             stop=4980.0,

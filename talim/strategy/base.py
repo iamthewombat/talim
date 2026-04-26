@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from talim.models.bar import OHLCVBar
 from talim.models.signal import Signal
+from talim.strategy.params import ParamSpec, validate_param_dict
 
 
 class BaseStrategy(ABC):
     """Abstract base for all Talim strategies.
 
     The same on_bar implementation runs in both live and backtest modes.
+
+    Subclasses declare tunable parameters in ``PARAMS`` (a list of
+    :class:`ParamSpec`). When ``PARAMS`` is non-empty, ``load_params``
+    validates and coerces the incoming dict against the schema and raises
+    :class:`StrategyParamError` on any violation. Strategies without a
+    declared schema fall back to the legacy permissive ``setattr`` behaviour.
     """
+
+    PARAMS: list[ParamSpec] = []
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Unique strategy identifier (e.g. 'momentum-ES')."""
+        """Unique strategy identifier (e.g. 'momentum-US500')."""
         ...
 
     @abstractmethod
@@ -25,8 +35,23 @@ class BaseStrategy(ABC):
         """Process a new bar. Return a Signal if entry/exit criteria are met."""
         ...
 
-    def load_params(self, params: dict) -> None:
-        """Load or update strategy parameters at runtime."""
+    def load_params(self, params: dict[str, Any]) -> None:
+        """Load or update strategy parameters at runtime.
+
+        If the strategy declares a ``PARAMS`` schema, incoming values are
+        validated and coerced against it and unknown keys are rejected.
+        Otherwise values are applied only if the attribute already exists on
+        the strategy (legacy behaviour preserved for older strategies).
+        """
+        if self.PARAMS:
+            coerced = validate_param_dict(
+                params,
+                self.PARAMS,
+                strategy=self.name,
+            )
+            for key, value in coerced.items():
+                setattr(self, key, value)
+            return
         for key, value in params.items():
             if hasattr(self, key):
                 setattr(self, key, value)
@@ -34,3 +59,16 @@ class BaseStrategy(ABC):
     def reset(self) -> None:
         """Reset internal state (e.g. between backtest runs)."""
         pass
+
+    @classmethod
+    def params_schema(cls) -> list[dict[str, Any]]:
+        """Return the declared parameter schema as a list of JSON-safe dicts."""
+        return [spec.to_dict() for spec in cls.PARAMS]
+
+    def current_params(self) -> dict[str, Any]:
+        """Return the current values of all declared parameters."""
+        return {spec.name: getattr(self, spec.name) for spec in self.PARAMS}
+
+    def current_params_subset(self, keys: list[str]) -> dict[str, Any]:
+        """Return current values for a subset of parameter names."""
+        return {key: getattr(self, key) for key in keys if hasattr(self, key)}

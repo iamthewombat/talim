@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -124,6 +124,51 @@ class EpisodicMemory:
             (strategy,),
         ).fetchone()
         return dict(rows) if rows else {}
+
+    def record_activation(
+        self,
+        *,
+        strategy: str,
+        action: str,
+        actor: str = "operator",
+        notes: str = "",
+        timestamp: str | None = None,
+    ) -> int:
+        """Record a strategy enable/disable event (WP-70). Returns the row id."""
+        ts = timestamp or datetime.now(tz=timezone.utc).isoformat()
+        cur = self._conn.execute(
+            """
+            INSERT INTO strategy_activations
+                (timestamp, strategy, action, actor, notes)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ts, strategy, action, actor, notes),
+        )
+        self._conn.commit()
+        return cur.lastrowid  # type: ignore[return-value]
+
+    def query_activations(
+        self,
+        *,
+        strategy: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list = []
+        if strategy is not None:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+        where = " AND ".join(clauses) if clauses else "1=1"
+        rows = self._conn.execute(
+            f"""
+            SELECT * FROM strategy_activations
+            WHERE {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (*params, int(limit)),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         self._conn.close()

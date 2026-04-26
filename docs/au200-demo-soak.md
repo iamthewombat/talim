@@ -60,7 +60,7 @@ Run the baseline AU200 backtest:
   --params '{"ema_fast_period": 10, "ema_slow_period": 30, "min_ema_gap_atr": 0.10}'
 ```
 
-The first recorded baseline run is in [docs/au200-backtest-baseline.md](/Users/justinluu/code/paige/talim/docs/au200-backtest-baseline.md:1).
+The first recorded baseline run is in [docs/au200-backtest-baseline.md](../docs/au200-backtest-baseline.md:1).
 
 ## Demo Configuration
 
@@ -113,4 +113,4 @@ No-Go:
 - order placement or confirm lookup instability
 - strategy behaviour that materially diverges from the backtest baseline
 
-After the soak, write the decision into [docs/au200-soak-review-template.md](/Users/justinluu/code/paige/talim/docs/au200-soak-review-template.md:1).
+After the soak, write the decision into [docs/au200-soak-review-template.md](../docs/au200-soak-review-template.md:1).

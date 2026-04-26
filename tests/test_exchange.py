@@ -18,7 +18,7 @@ class TestMockExchange:
     def test_place_market_order_fills_immediately(self):
         ex = MockExchange()
         ex.set_fill_price("ES", 5400.0)
-        order = ex.place_order("ES", "buy", qty=2.0, strategy="momentum-ES")
+        order = ex.place_order("ES", "buy", qty=2.0, strategy="momentum-US500")
 
         assert order.status == OrderStatus.FILLED
         assert order.fill_price == 5400.0
@@ -27,7 +27,7 @@ class TestMockExchange:
     def test_fill_creates_position(self):
         ex = MockExchange()
         ex.set_fill_price("ES", 5400.0)
-        ex.place_order("ES", "buy", qty=2.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", qty=2.0, strategy="momentum-US500")
 
         positions = ex.get_positions()
         assert len(positions) == 1
@@ -35,6 +35,24 @@ class TestMockExchange:
         assert positions[0].side == "long"
         assert positions[0].qty == 2.0
         assert positions[0].entry_price == 5400.0
+
+    def test_market_order_attaches_stop_and_target_to_position(self):
+        ex = MockExchange()
+        ex.set_fill_price("ES", 5400.0)
+        order = ex.place_order(
+            "ES",
+            "buy",
+            qty=2.0,
+            strategy="momentum-US500",
+            stop_price=5380.0,
+            target_price=5440.0,
+        )
+
+        positions = ex.get_positions()
+        assert positions[0].stop == 5380.0
+        assert positions[0].target == 5440.0
+        assert order.stop_price == 5380.0
+        assert order.target_price == 5440.0
 
     def test_short_position(self):
         ex = MockExchange()

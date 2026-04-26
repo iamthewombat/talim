@@ -33,6 +33,15 @@ Thumbs.db
 # Docker volumes
 nginx/certs/
 
+# Bind-mounted runtime state (WP-47). Directories are committed via
+# .gitkeep; their contents are local to each host.
+/state/*
+!/state/.gitkeep
+/redis/*
+!/redis/.gitkeep
+/backups/*
+!/backups/.gitkeep
+
 # Distribution
 dist/
 *.egg-info/

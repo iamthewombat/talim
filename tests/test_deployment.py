@@ -46,3 +46,4 @@ class TestDeploymentFiles:
     def test_cron_config(self):
         body = _read("scripts/cron.txt")
         assert "*/5" in body  # heartbeat
+        assert "/talim/sync" in body  # broker state reconciliation

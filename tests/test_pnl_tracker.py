@@ -25,7 +25,7 @@ class _StaticExchange:
 def _exchange_with_position() -> MockExchange:
     ex = MockExchange(starting_balance=100_000.0)
     ex.set_fill_price("ES", 5000.0)
-    ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+    ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
     return ex
 
 
@@ -74,7 +74,7 @@ class TestPnLTracker:
 
         # Simulate a fill that changes balance
         ex.set_fill_price("ES", 5000.0)
-        ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
 
         snap2 = tracker.refresh(ex)
         # Balance dropped by 5000 (bought 1 @ 5000)
@@ -87,12 +87,12 @@ class TestPnLTracker:
 
         # Trade 1
         ex.set_fill_price("ES", 5000.0)
-        ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
         tracker.refresh(ex)
 
         # Trade 2: sell to close (balance goes back up)
         ex.set_fill_price("ES", 5010.0)
-        ex.place_order("ES", "sell", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "sell", 1.0, strategy="momentum-US500")
         snap = tracker.refresh(ex)
 
         # Net effect: bought at 5000, sold at 5010 → +10 realised
@@ -105,7 +105,7 @@ class TestPnLTracker:
         tracker.refresh(ex)
 
         ex.set_fill_price("ES", 5000.0)
-        ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
         tracker.refresh(ex)
         assert tracker._daily_pnl != 0.0
 
@@ -121,7 +121,7 @@ class TestPnLTracker:
         tracker.refresh(ex)
 
         ex.set_fill_price("ES", 5000.0)
-        ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
         tracker.refresh(ex)
         assert tracker._daily_pnl != 0.0
 
@@ -135,7 +135,7 @@ class TestPnLTracker:
         ex = MockExchange(starting_balance=100_000.0)
         # Manually set open_pnl on a position
         ex.set_fill_price("ES", 5000.0)
-        ex.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        ex.place_order("ES", "buy", 1.0, strategy="momentum-US500")
         # MockExchange doesn't update open_pnl on its own,
         # so set it directly for this test
         pos = ex.get_positions()[0]

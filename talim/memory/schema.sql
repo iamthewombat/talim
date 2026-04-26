@@ -35,3 +35,18 @@ CREATE TABLE IF NOT EXISTS regime_library (
 );
 
 CREATE INDEX IF NOT EXISTS idx_regime_library_date ON regime_library(session_date);
+
+CREATE TABLE IF NOT EXISTS strategy_activations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    action TEXT NOT NULL,        -- enable | disable
+    actor TEXT NOT NULL DEFAULT 'operator',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_activations_strategy
+    ON strategy_activations(strategy);
+CREATE INDEX IF NOT EXISTS idx_strategy_activations_timestamp
+    ON strategy_activations(timestamp);

@@ -9,7 +9,7 @@ from talim.connectors.pricefeed.base import BasePriceFeed
 
 logger = logging.getLogger("talim.pricefeed.factory")
 
-VALID_FEEDS = {"mock", "binance", "ig"}
+VALID_FEEDS = {"mock", "binance", "ig", "forexcom"}
 
 
 class PriceFeedConfigError(ValueError):
@@ -40,7 +40,13 @@ def create_pricefeed(
         logger.info("pricefeed factory: using BinancePriceFeed(timeframe=%s)", timeframe)
         return BinancePriceFeed(timeframe=timeframe)
 
-    from talim.connectors.pricefeed.ig import IgPriceFeed
+    if name == "ig":
+        from talim.connectors.pricefeed.ig import IgPriceFeed
 
-    logger.info("pricefeed factory: using IgPriceFeed(timeframe=%s)", timeframe)
-    return IgPriceFeed.from_env(timeframe=timeframe)
+        logger.info("pricefeed factory: using IgPriceFeed(timeframe=%s)", timeframe)
+        return IgPriceFeed.from_env(timeframe=timeframe)
+
+    from talim.connectors.pricefeed.forexcom import ForexcomPriceFeed
+
+    logger.info("pricefeed factory: using ForexcomPriceFeed(timeframe=%s)", timeframe)
+    return ForexcomPriceFeed.from_env(timeframe=timeframe)

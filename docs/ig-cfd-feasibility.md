@@ -17,7 +17,7 @@ Compared with less-documented CFD venues, IG gives Talim a clean first implement
 
 ## Initial Scope
 
-The canonical CFD registry in [config/cfd_instruments.json](/Users/justinluu/code/paige/talim/config/cfd_instruments.json:1) starts with:
+The canonical CFD registry in [config/cfd_instruments.json](../config/cfd_instruments.json:1) starts with:
 
 - `AU200.cash`
 - `AU200.fwd`
@@ -48,7 +48,7 @@ What the demo account returned:
 On April 13, 2026, the new `IGPriceFeed` also verified:
 
 - `/prices/{epic}?resolution=MINUTE_5&max=...` returns usable `5m` bars on the demo account
-- `AU200.cash` bars can be fetched and written to Parquet via [ingest_ig_prices.py](/Users/justinluu/code/paige/talim/scripts/ingest_ig_prices.py:1)
+- `AU200.cash` bars can be fetched and written to Parquet via [ingest_ig_prices.py](../scripts/ingest_ig_prices.py:1)
 
 Important consequence:
 
@@ -84,21 +84,21 @@ Session tokens are useful if you want to avoid storing the password in the scrip
 Search the target market:
 
 ```bash
-cd /Users/justinluu/code/paige/talim
+cd /path/to/talim
 ./.venv/bin/python scripts/ig_market_discovery.py --canonical-id AU200.cash --search-only --json
 ```
 
 Fetch the first discovered market and print a registry-ready patch:
 
 ```bash
-cd /Users/justinluu/code/paige/talim
+cd /path/to/talim
 ./.venv/bin/python scripts/ig_market_discovery.py --canonical-id AU200.cash --select 0 --json
 ```
 
 Fetch a known epic directly:
 
 ```bash
-cd /Users/justinluu/code/paige/talim
+cd /path/to/talim
 ./.venv/bin/python scripts/ig_market_discovery.py --canonical-id AU200.cash --epic YOUR_IG_EPIC --json
 ```
 

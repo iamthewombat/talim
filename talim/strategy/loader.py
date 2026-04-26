@@ -18,7 +18,7 @@ def load_strategy(name: str, strategies_dir: Path | None = None) -> BaseStrategy
     The module must define a class that subclasses BaseStrategy.
 
     Args:
-        name: Strategy directory name (e.g. 'momentum-ES').
+        name: Strategy directory name (e.g. 'momentum-US500').
         strategies_dir: Override for the strategies root directory.
 
     Returns:

@@ -38,7 +38,7 @@ def _make_position() -> Position:
         entry_price=5400.0,
         stop=5380.0,
         target=5440.0,
-        strategy="momentum-ES",
+        strategy="momentum-US500",
         open_pnl=200.0,
         entry_time=datetime(2025, 6, 15, 9, 35, 0),
         position_id="pos-001",
@@ -48,7 +48,7 @@ def _make_position() -> Position:
 def _make_signal() -> Signal:
     return Signal(
         instrument="ES",
-        strategy="momentum-ES",
+        strategy="momentum-US500",
         side="long",
         entry_price=5400.0,
         stop=5380.0,
@@ -62,7 +62,7 @@ def _make_signal() -> Signal:
 
 def _make_backtest_request() -> BacktestRequest:
     return BacktestRequest(
-        strategy_name="momentum-ES",
+        strategy_name="momentum-US500",
         instrument="AU200.cash",
         timeframe="1h",
         param_variants=[{"ema_fast": 8, "ema_slow": 21}],
@@ -73,7 +73,7 @@ def _make_backtest_request() -> BacktestRequest:
 
 def _make_backtest_result() -> BacktestResult:
     return BacktestResult(
-        strategy_name="momentum-ES",
+        strategy_name="momentum-US500",
         net_pnl=1250.0,
         sharpe_ratio=1.8,
         max_drawdown=-400.0,
@@ -148,7 +148,7 @@ class TestPosition:
 class TestSignal:
     def test_instantiation(self):
         sig = _make_signal()
-        assert sig.strategy == "momentum-ES"
+        assert sig.strategy == "momentum-US500"
         assert sig.confidence == 0.85
 
     def test_roundtrip(self):
@@ -160,7 +160,7 @@ class TestSignal:
     def test_roundtrip_no_timestamp(self):
         sig = Signal(
             instrument="ES",
-            strategy="momentum-ES",
+            strategy="momentum-US500",
             side="long",
             entry_price=5400.0,
             stop=5380.0,
@@ -177,7 +177,7 @@ class TestSignal:
 class TestBacktestRequest:
     def test_instantiation(self):
         req = _make_backtest_request()
-        assert req.strategy_name == "momentum-ES"
+        assert req.strategy_name == "momentum-US500"
         assert req.instrument == "AU200.cash"
         assert req.timeframe == "1h"
         assert len(req.matched_dates) == 2
@@ -228,6 +228,7 @@ class TestTalimState:
         "pending_signal",
         "signal_approved",
         "active_positions",
+        "account_balance",
         "open_pnl",
         "daily_pnl",
         "last_action",
@@ -273,8 +274,9 @@ class TestTalimState:
             "pending_signal": _make_signal(),
             "signal_approved": None,
             "active_positions": [_make_position()],
-            "active_strategies": ["momentum-ES"],
-            "strategy_params": {"momentum-ES": {"ema_fast": 8, "ema_slow": 21}},
+            "account_balance": 100000.0,
+            "active_strategies": ["momentum-US500"],
+            "strategy_params": {"momentum-US500": {"ema_fast": 8, "ema_slow": 21}},
             "pending_backtest": None,
             "backtest_result": None,
             "last_user_message": None,

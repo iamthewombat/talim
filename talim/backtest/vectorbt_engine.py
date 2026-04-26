@@ -6,7 +6,7 @@ share code by construction. That's the right default — but for parameter
 sweeps it's slow.
 
 This module provides a faster vectorised path using `vectorbt`. It only
-supports the two PoC strategies (`momentum-ES`, `mean-reversion-ES`) since
+supports the two PoC strategies (`momentum-US500`, `mean-reversion-US500`) since
 each strategy needs a hand-written translation from `on_bar` logic to
 vectorbt entry/exit boolean series. A parity test (skipped if vectorbt
 isn't installed) checks the new path stays within tolerance of the on_bar
@@ -60,9 +60,9 @@ def _mean_reversion_signals(
 
 
 _TRANSLATORS = {
-    "momentum-ES": _momentum_signals,
+    "momentum-US500": _momentum_signals,
     "momentum-AU200": _momentum_signals,
-    "mean-reversion-ES": _mean_reversion_signals,
+    "mean-reversion-US500": _mean_reversion_signals,
 }
 
 

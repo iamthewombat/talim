@@ -34,14 +34,31 @@ def load_ohlcv(
     matched_dates: list[date] | None = None,
     timeframe: str | None = None,
 ) -> pd.DataFrame:
-    """Load OHLCV bars for `instrument`, optionally filtered to `matched_dates`."""
+    """Load OHLCV bars for `instrument`, optionally filtered to `matched_dates`.
+
+    Fails loudly on missing data: if an explicit `timeframe` is requested but
+    the corresponding parquet file is absent, a FileNotFoundError is raised
+    rather than silently falling back to a different resolution. An empty
+    resulting frame also raises, so backtests never report zero-trade results
+    that are actually zero-bar runs.
+    """
     root = Path(data_dir)
     per_day_dir = root / instrument
     if per_day_dir.is_dir():
         if timeframe:
             timeframe_file = per_day_dir / f"{timeframe}.parquet"
-            if timeframe_file.exists():
-                return _validate(pd.read_parquet(timeframe_file))
+            if not timeframe_file.exists():
+                raise FileNotFoundError(
+                    f"No {timeframe} parquet for {instrument} at {timeframe_file}. "
+                    f"Ingest via scripts/ingest_ig_prices.py or "
+                    f"scripts/ingest_forexcom_prices.py before running this backtest."
+                )
+            df = _validate(pd.read_parquet(timeframe_file))
+            if df.empty:
+                raise ValueError(
+                    f"Parquet file {timeframe_file} is empty; ingest failed or data is missing."
+                )
+            return df
         if matched_dates:
             files = [per_day_dir / f"{d.isoformat()}.parquet" for d in matched_dates]
             files = [f for f in files if f.exists()]
@@ -52,7 +69,12 @@ def load_ohlcv(
                 f"No parquet files found for {instrument} under {per_day_dir}"
             )
         frames = [pd.read_parquet(f) for f in files]
-        return _validate(pd.concat(frames, ignore_index=True))
+        df = _validate(pd.concat(frames, ignore_index=True))
+        if df.empty:
+            raise ValueError(
+                f"All parquet files under {per_day_dir} are empty after filtering."
+            )
+        return df
 
     single = root / f"{instrument}.parquet"
     if single.exists():
@@ -60,6 +82,10 @@ def load_ohlcv(
         if matched_dates:
             wanted = {d for d in matched_dates}
             df = df[df["timestamp"].dt.date.isin(wanted)].reset_index(drop=True)
+        if df.empty:
+            raise ValueError(
+                f"{single} resolved to zero rows after filtering by matched_dates."
+            )
         return df
 
     raise FileNotFoundError(

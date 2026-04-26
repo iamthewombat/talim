@@ -92,6 +92,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
         order_type: str = "market",
         limit_price: float | None = None,
         strategy: str = "",
+        stop_price: float | None = None,
+        target_price: float | None = None,
     ) -> Order:
         if side not in ("buy", "sell"):
             raise ValueError(f"Invalid side: {side}")
@@ -108,45 +110,51 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
             "ig",
             order_type="market" if order_type_normalized == "market" else "limit",
             working_order=order_type_normalized == "limit",
+            attached_stop=stop_price is not None,
+            attached_limit=target_price is not None,
         )
 
         deal_reference = self._new_deal_reference()
         if order_type_normalized == "market":
+            payload = {
+                "currencyCode": resolved.currency_code,
+                "dealReference": deal_reference,
+                "direction": self._direction(side),
+                "epic": resolved.broker_symbol,
+                "expiry": resolved.expiry,
+                "forceOpen": False,
+                "guaranteedStop": False,
+                "orderType": "MARKET",
+                "size": qty,
+                "timeInForce": "FILL_OR_KILL",
+            }
+            self._add_protection(payload, stop_price=stop_price, target_price=target_price)
             response = self._client.post(
                 "/positions/otc",
                 headers=self._headers(authenticated=True, version="2"),
-                json={
-                    "currencyCode": resolved.currency_code,
-                    "dealReference": deal_reference,
-                    "direction": self._direction(side),
-                    "epic": resolved.broker_symbol,
-                    "expiry": resolved.expiry,
-                    "forceOpen": False,
-                    "guaranteedStop": False,
-                    "orderType": "MARKET",
-                    "size": qty,
-                    "timeInForce": "FILL_OR_KILL",
-                },
+                json=payload,
             )
         else:
             if limit_price is None:
                 raise ValueError("IG limit orders require limit_price")
+            payload = {
+                "currencyCode": resolved.currency_code,
+                "dealReference": deal_reference,
+                "direction": self._direction(side),
+                "epic": resolved.broker_symbol,
+                "expiry": resolved.expiry,
+                "forceOpen": False,
+                "guaranteedStop": False,
+                "level": limit_price,
+                "size": qty,
+                "timeInForce": "GOOD_TILL_CANCELLED",
+                "type": "LIMIT",
+            }
+            self._add_protection(payload, stop_price=stop_price, target_price=target_price)
             response = self._client.post(
                 "/working-orders/otc",
                 headers=self._headers(authenticated=True, version="2"),
-                json={
-                    "currencyCode": resolved.currency_code,
-                    "dealReference": deal_reference,
-                    "direction": self._direction(side),
-                    "epic": resolved.broker_symbol,
-                    "expiry": resolved.expiry,
-                    "forceOpen": False,
-                    "guaranteedStop": False,
-                    "level": limit_price,
-                    "size": qty,
-                    "timeInForce": "GOOD_TILL_CANCELLED",
-                    "type": "LIMIT",
-                },
+                json=payload,
             )
         self._raise_for_status(response, f"place IG {order_type_normalized} order")
         response_payload = response.json()
@@ -160,6 +168,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
             order_type=order_type_normalized,
             limit_price=limit_price,
             strategy=strategy,
+            stop_price=stop_price,
+            target_price=target_price,
             deal_reference=deal_reference,
             confirm=confirm,
         )
@@ -271,6 +281,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
                 order_type=cached.order_type if cached else "market",
                 limit_price=cached.limit_price if cached else None,
                 strategy=cached.strategy if cached else "",
+                stop_price=cached.stop_price if cached else None,
+                target_price=cached.target_price if cached else None,
                 deal_reference=order_id,
                 confirm=confirm,
             )
@@ -302,6 +314,18 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
     @staticmethod
     def _direction(side: str) -> str:
         return "BUY" if side == "buy" else "SELL"
+
+    @staticmethod
+    def _add_protection(
+        payload: dict[str, Any],
+        *,
+        stop_price: float | None,
+        target_price: float | None,
+    ) -> None:
+        if stop_price is not None:
+            payload["stopLevel"] = stop_price
+        if target_price is not None:
+            payload["limitLevel"] = target_price
 
     def _fetch_confirm(self, deal_reference: str) -> dict[str, Any] | None:
         self.create_session()
@@ -349,6 +373,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
         order_type: str,
         limit_price: float | None,
         strategy: str,
+        stop_price: float | None,
+        target_price: float | None,
         deal_reference: str,
         confirm: dict[str, Any] | None,
     ) -> Order:
@@ -379,6 +405,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
             fill_price=fill_price,
             fill_time=fill_time,
             strategy=strategy,
+            stop_price=stop_price,
+            target_price=target_price,
         )
 
     def _cache_order(self, order: Order, deal_reference: str | None) -> None:
@@ -437,6 +465,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
             order_type=order_type,
             limit_price=self._maybe_float(data.get("orderLevel") or data.get("level")),
             status=OrderStatus.OPEN,
+            stop_price=self._maybe_float(data.get("stopLevel")),
+            target_price=self._maybe_float(data.get("limitLevel")),
         )
 
     def _find_position_order(self, deal_id: str) -> Order | None:
@@ -451,6 +481,8 @@ class IgExchange(IgDiscoveryClient, BaseExchange):
                     status=OrderStatus.FILLED,
                     fill_price=position.entry_price,
                     fill_time=position.entry_time,
+                    stop_price=position.stop or None,
+                    target_price=position.target or None,
                 )
         return None
 

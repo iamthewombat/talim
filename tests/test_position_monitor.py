@@ -43,7 +43,7 @@ def _position(
         entry_price=entry_price,
         stop=stop,
         target=target,
-        strategy="momentum-ES",
+        strategy="momentum-US500",
     )
 
 
@@ -125,7 +125,7 @@ class TestPositionMonitorNode:
     def test_pending_signal_skips(self):
         """Don't clobber an existing pending_signal from the scanner."""
         existing = Signal(
-            instrument="ES", strategy="momentum-ES", side="long",
+            instrument="ES", strategy="momentum-US500", side="long",
             entry_price=5000, stop=4980, target=5030, rationale="test",
             regime_context="", action="enter",
         )

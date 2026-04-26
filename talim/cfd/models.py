@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 VALID_WEEKDAYS = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"}
-VALID_POSITION_MODELS = {"netted", "hedged", "unknown"}
+VALID_POSITION_MODELS = {"netted", "hedged", "fifo_stack", "unknown"}
 
 
 def _normalise_day(value: str) -> str:
@@ -99,6 +99,7 @@ class VenueCapabilities:
     supports_demo: bool = True
     supports_live: bool = True
     position_model: str = "unknown"
+    requires_quote_prior_to_order: bool = False
 
     def __post_init__(self) -> None:
         model = self.position_model.lower()
@@ -151,6 +152,7 @@ class VenueCapabilities:
             "supports_demo": self.supports_demo,
             "supports_live": self.supports_live,
             "position_model": self.position_model,
+            "requires_quote_prior_to_order": self.requires_quote_prior_to_order,
         }
 
     @classmethod

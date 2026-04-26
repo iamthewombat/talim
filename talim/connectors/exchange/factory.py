@@ -67,6 +67,14 @@ def create_exchange(
         except (ValueError, RuntimeError) as e:
             raise ExchangeConfigError(str(e)) from e
 
+    if exchange_name.lower() == "forexcom":
+        try:
+            from talim.connectors.exchange.forexcom_exchange import ForexcomExchange
+            logger.info("exchange factory: using ForexcomExchange (single-host)")
+            return ForexcomExchange.from_env()
+        except (ValueError, RuntimeError) as e:
+            raise ExchangeConfigError(str(e)) from e
+
     from talim.security.vault import Vault, VaultError
 
     try:

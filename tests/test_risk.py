@@ -20,7 +20,7 @@ from talim.risk.rules import DEFAULT_RULES, RiskRules, load_rules
 
 def _signal(instrument: str = "ES", side: str = "long") -> Signal:
     return Signal(
-        instrument=instrument, strategy="momentum-ES", side=side,
+        instrument=instrument, strategy="momentum-US500", side=side,
         entry_price=5400.0, stop=5380.0, target=5440.0,
         rationale="t", regime_context="momentum",
     )
@@ -30,7 +30,7 @@ def _position(instrument: str = "ES", qty: float = 1.0) -> Position:
     return Position(
         instrument=instrument, side="long", qty=qty,
         entry_price=5400.0, stop=5380.0, target=5440.0,
-        strategy="momentum-ES",
+        strategy="momentum-US500",
     )
 
 

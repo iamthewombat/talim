@@ -179,9 +179,45 @@ class TestTriggerEndpoint:
 # End-to-end with real bridge_message (no LLM client)
 # ---------------------------------------------------------------------------
 
+class TestOperatorDashboard:
+    """Smoke test that the WP-69 static dashboard is mounted and reachable."""
+
+    def test_index_html_loads(self, client):
+        r = client.get("/talim/dashboard/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "Talim Operator" in r.text
+
+    def test_no_trailing_slash_also_loads(self, client):
+        r = client.get("/talim/dashboard")
+        # StaticFiles html=True redirects or serves index for the mount root.
+        assert r.status_code in (200, 307)
+
+    def test_assets_served(self, client):
+        r = client.get("/talim/dashboard/app.js")
+        assert r.status_code == 200
+        assert "javascript" in r.headers["content-type"]
+        assert "refreshStatus" in r.text
+
+        r = client.get("/talim/dashboard/style.css")
+        assert r.status_code == 200
+        assert "text/css" in r.headers["content-type"]
+
+    def test_dashboard_is_public_html_shell(self, client):
+        # The HTML shell is public so the operator can load the page before
+        # pasting their secret. The JS inside makes authenticated API calls.
+        r = client.get("/talim/dashboard/")
+        assert r.status_code == 200
+        # But the API calls the dashboard makes still require the secret.
+        r = client.get("/talim/operator/status")
+        assert r.status_code == 401
+
+
 class TestRealRoundTrip:
-    def test_real_bridge_message(self, monkeypatch):
+    def test_real_bridge_message(self, monkeypatch, tmp_path):
         monkeypatch.setenv("TALIM_BRIDGE_SECRET", SECRET)
+        monkeypatch.setenv("TALIM_CHECKPOINT_DB", str(tmp_path / "checkpoints.db"))
+        monkeypatch.setenv("TALIM_EPISODIC_DB", str(tmp_path / "episodic.db"))
         app = create_app()  # use the real entry points
         client = TestClient(app)
         r = client.post(

@@ -1,7 +1,7 @@
-# mean-reversion-ES
+# mean-reversion-US500
 
 ## Overview
-Bollinger Band mean-reversion strategy for E-mini S&P 500 futures (ES).
+Bollinger Band mean-reversion strategy for the US500 index CFD (S&P 500 cash, tradeable via IG/FOREX.com).
 
 ## Logic
 - **Entry long:** Price closes below lower Bollinger Band (cross from above)

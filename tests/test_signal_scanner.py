@@ -50,7 +50,7 @@ def _make_flat_df(n: int = 100) -> pd.DataFrame:
 
 def _setup_scanner(df: pd.DataFrame, strategies: list[str] | None = None):
     feed = MockPriceFeed(source=df, instrument="ES")
-    strats = [load_strategy(name) for name in (strategies or ["momentum-ES"])]
+    strats = [load_strategy(name) for name in (strategies or ["momentum-US500"])]
     configure_scanner(feed, strategies=strats)
     feed.connect()
     feed.subscribe("ES")
@@ -157,7 +157,7 @@ class TestSignalScannerNode:
         sig = update.get("pending_signal")
         assert sig is not None
         assert isinstance(sig, Signal)
-        assert sig.strategy == "momentum-ES"
+        assert sig.strategy == "momentum-US500"
         assert sig.side in ("long", "short")
 
     def test_regime_change_flag(self):
@@ -202,7 +202,7 @@ class TestSignalScannerNode:
             for ts, row in zip(df["timestamp"], df.itertuples(index=False))
         ]
         feed = _PollingFeed(bars)
-        strategy = load_strategy("momentum-ES")
+        strategy = load_strategy("momentum-US500")
         configure_scanner(feed, strategies=[strategy])
         feed.connect()
         feed.subscribe("AU200.cash")

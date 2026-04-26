@@ -14,7 +14,7 @@ from talim.models.signal import Signal
 def _signal(action: str = "enter", side: str = "long") -> Signal:
     return Signal(
         instrument="ES",
-        strategy="momentum-ES",
+        strategy="momentum-US500",
         side=side,
         entry_price=5400.0,
         stop=5390.0,
@@ -54,6 +54,14 @@ def test_execute_places_order_and_records_decision(tmp_path):
 
     positions = exchange.get_positions()
     assert any(p.instrument == "ES" for p in positions)
+    assert positions[0].stop == 5390.0
+    assert positions[0].target == 5420.0
+    assert len(update["active_positions"]) == 1
+
+    order = exchange.get_order(positions[0].position_id)
+    assert order is not None
+    assert order.stop_price == 5390.0
+    assert order.target_price == 5420.0
 
     rows = mem.query_decisions(instrument="ES")
     assert len(rows) == 1
@@ -66,10 +74,68 @@ def test_execute_places_order_and_records_decision(tmp_path):
 def test_execute_exit_signal_records_signal_type_exit(tmp_path):
     exchange = MockExchange(starting_balance=100_000.0)
     exchange.set_fill_price("ES", 5400.0)
+    exchange.place_order("ES", "sell", 1.0, strategy="momentum-US500")
     mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
     configure_execute(exchange, episodic=mem)
 
-    execute({"pending_signal": _signal(action="exit", side="short")})
+    execute({
+        "pending_signal": _signal(action="exit", side="short"),
+        "active_positions": exchange.get_positions(),
+    })
     row = mem.query_decisions(instrument="ES")[0]
     assert row["signal_type"] == "exit"
     mem.close()
+
+
+def test_execute_exit_signal_closes_long_with_sell(tmp_path):
+    exchange = MockExchange(starting_balance=100_000.0)
+    exchange.set_fill_price("ES", 5400.0)
+    exchange.place_order("ES", "buy", 2.0, strategy="momentum-US500")
+    exchange.set_fill_price("ES", 5410.0)
+    mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
+    configure_execute(exchange, episodic=mem)
+
+    update = execute({
+        "pending_signal": _signal(action="exit", side="long"),
+        "active_positions": exchange.get_positions(),
+    })
+
+    assert update["pending_signal"] is None
+    assert update["active_positions"] == []
+    assert exchange.get_positions() == []
+    row = mem.query_decisions(instrument="ES")[0]
+    assert row["signal_type"] == "exit"
+    assert row["outcome"] == "closed"
+    assert "order_side=sell" in row["notes"]
+    mem.close()
+
+
+def test_execute_exit_signal_closes_short_with_buy(tmp_path):
+    exchange = MockExchange(starting_balance=100_000.0)
+    exchange.set_fill_price("ES", 5400.0)
+    exchange.place_order("ES", "sell", 1.0, strategy="momentum-US500")
+    exchange.set_fill_price("ES", 5390.0)
+    mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
+    configure_execute(exchange, episodic=mem)
+
+    update = execute({
+        "pending_signal": _signal(action="exit", side="short"),
+        "active_positions": exchange.get_positions(),
+    })
+
+    assert update["active_positions"] == []
+    assert exchange.get_positions() == []
+    row = mem.query_decisions(instrument="ES")[0]
+    assert "order_side=buy" in row["notes"]
+    mem.close()
+
+
+def test_execute_exit_skips_when_no_matching_position():
+    exchange = MockExchange(starting_balance=100_000.0)
+    configure_execute(exchange)
+
+    update = execute({"pending_signal": _signal(action="exit", side="long")})
+
+    assert update["pending_signal"] is None
+    assert "execute-skipped exit long ES" in update["last_action"]
+    assert exchange.get_positions() == []

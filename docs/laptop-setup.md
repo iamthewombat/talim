@@ -168,17 +168,22 @@ Current caveats:
 
 See:
 
-- [exchange-setup.md](/Users/justinluu/code/paige/talim/docs/exchange-setup.md)
-- [ig-cfd-feasibility.md](/Users/justinluu/code/paige/talim/docs/ig-cfd-feasibility.md)
+- [exchange-setup.md](../docs/exchange-setup.md)
+- [ig-cfd-feasibility.md](../docs/ig-cfd-feasibility.md)
 
 ## 8. Backups
 
-- [ ] Enable Talim backups with [scripts/backup.sh](/Users/justinluu/code/paige/talim/scripts/backup.sh)
+- [ ] Enable Talim backups with [scripts/backup.sh](../scripts/backup.sh)
 - [ ] Back up the Talim repo `.env` securely
 - [ ] Back up Talim state/data directories
 - [ ] Back up OpenClaw state/config
 - [ ] Keep at least one encrypted copy off the laptop
 - [ ] Test restore at least once
+
+> Talim's persistent state lives in bind-mounted host directories
+> (`./state`, `./redis`, `./backups`) — see
+> [vps-migration.md](vps-migration.md) for the full layout and the
+> procedure for moving the deployment to a different host.
 
 ## 9. Sign-Off Before Long-Running Demo Use
 

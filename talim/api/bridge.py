@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from talim.api.auth import require_secret
 from talim.metrics import METRICS
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 logger = logging.getLogger("talim.api.bridge")
 
@@ -43,8 +47,88 @@ class TriggerResponse(BaseModel):
     state_keys: list[str] = Field(default_factory=list)
 
 
+class SyncResponse(BaseModel):
+    thread_id: str
+    snapshot_exists: bool
+    paused: bool
+    next_nodes: list[str] = Field(default_factory=list)
+    state_updated: bool
+    position_count: int
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+    pnl: dict[str, Any]
+    repair_count: int
+    repairs: list[dict[str, Any]] = Field(default_factory=list)
+    pending_notification: str | None = None
+
+
 class HaltResponse(BaseModel):
     halted: bool
+
+
+class OperatorStatusResponse(BaseModel):
+    halted: bool
+    runtime: dict[str, Any]
+
+
+class PendingSignalResponse(BaseModel):
+    thread_id: str
+    exists: bool
+    paused: bool
+    next_nodes: list[str] = Field(default_factory=list)
+    pending_signal: dict[str, Any] | None = None
+    pending_notification: str | None = None
+    signal_approved: bool | None = None
+    last_action: str | None = None
+
+
+class OperatorDecisionRequest(BaseModel):
+    thread_id: str = Field(..., min_length=1)
+    approved: bool
+
+
+class OperatorDecisionResponse(BaseModel):
+    thread_id: str
+    approved: bool
+    pending_signal_cleared: bool
+    last_action: str | None = None
+
+
+class OperatorPositionsResponse(BaseModel):
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperatorDecisionsResponse(BaseModel):
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperatorStrategyParamsResponse(BaseModel):
+    strategy: str
+    schema_: list[dict[str, Any]] = Field(default_factory=list, alias="schema")
+    current: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"populate_by_name": True}
+
+
+class OperatorBacktestsResponse(BaseModel):
+    runs: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int
+    offset: int
+
+
+class OperatorBacktestResponse(BaseModel):
+    run: dict[str, Any]
+
+
+class OperatorStrategiesListResponse(BaseModel):
+    active: list[str] = Field(default_factory=list)
+    available: list[str] = Field(default_factory=list)
+
+
+class OperatorStrategyToggleResponse(BaseModel):
+    strategy: str
+    action: str
+    active: list[str] = Field(default_factory=list)
+    available: list[str] = Field(default_factory=list)
 
 
 # Module-level halt flag shared across all requests in this process.
@@ -69,6 +153,15 @@ def create_app(
     All functions are injectable for tests. Defaults wire up the production
     LangGraph entry points.
     """
+    runtime = None
+    if bridge_message_fn is None and resume_fn is None and cron_trigger_fn is None:
+        from talim.app.runtime import bootstrap_runtime
+
+        runtime = bootstrap_runtime()
+        bridge_message_fn = runtime.bridge_message
+        resume_fn = runtime.resume
+        cron_trigger_fn = runtime.cron_trigger
+
     if bridge_message_fn is None:
         from talim.app.entrypoints import bridge_message as _default_bridge
         bridge_message_fn = _default_bridge
@@ -80,10 +173,24 @@ def create_app(
         cron_trigger_fn = _default_cron
 
     app = FastAPI(title="Talim Bridge", version="0.1.0")
+    app.state.talim_runtime = runtime
+
+    def require_runtime():
+        current = getattr(app.state, "talim_runtime", None)
+        if current is None:
+            raise HTTPException(status_code=503, detail="Talim runtime is not bootstrapped")
+        return current
 
     @app.get("/talim/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    if _STATIC_DIR.is_dir():
+        app.mount(
+            "/talim/dashboard",
+            StaticFiles(directory=_STATIC_DIR, html=True),
+            name="dashboard",
+        )
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics() -> str:
@@ -137,6 +244,17 @@ def create_app(
         )
 
     @app.post(
+        "/talim/sync",
+        response_model=SyncResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def sync(thread_id: str = "cron-main") -> SyncResponse:
+        """Refresh broker positions/P&L and reconcile runtime state."""
+        logger.info("sync: thread=%s", thread_id)
+        rt = require_runtime()
+        return SyncResponse(**rt.sync_state(thread_id=thread_id))
+
+    @app.post(
         "/talim/halt",
         response_model=HaltResponse,
         dependencies=[Depends(require_secret)],
@@ -162,5 +280,179 @@ def create_app(
     def halt_status() -> HaltResponse:
         """Check whether the kill switch is active (no auth required)."""
         return HaltResponse(halted=is_halted())
+
+    @app.get(
+        "/talim/operator/status",
+        response_model=OperatorStatusResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_status() -> OperatorStatusResponse:
+        """Return runtime health/config for an operator client such as OpenClaw."""
+        rt = require_runtime()
+        return OperatorStatusResponse(
+            halted=is_halted(),
+            runtime=rt.operator_status(),
+        )
+
+    @app.get(
+        "/talim/operator/pending",
+        response_model=PendingSignalResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_pending(thread_id: str = "cron-main") -> PendingSignalResponse:
+        """Return pending HITL signal details for one graph thread."""
+        rt = require_runtime()
+        return PendingSignalResponse(**rt.pending_signal_status(thread_id=thread_id))
+
+    @app.post(
+        "/talim/operator/decision",
+        response_model=OperatorDecisionResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_decision(req: OperatorDecisionRequest) -> OperatorDecisionResponse:
+        """Approve or reject the pending signal for one graph thread."""
+        rt = require_runtime()
+        final = rt.resume(thread_id=req.thread_id, approved=req.approved)
+        return OperatorDecisionResponse(
+            thread_id=req.thread_id,
+            approved=req.approved,
+            pending_signal_cleared=(final or {}).get("pending_signal") is None,
+            last_action=(final or {}).get("last_action"),
+        )
+
+    @app.get(
+        "/talim/operator/positions",
+        response_model=OperatorPositionsResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_positions() -> OperatorPositionsResponse:
+        """Return current broker positions."""
+        rt = require_runtime()
+        return OperatorPositionsResponse(positions=rt.operator_positions())
+
+    @app.get(
+        "/talim/operator/decisions",
+        response_model=OperatorDecisionsResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_decisions(
+        limit: int = 20,
+        instrument: str | None = None,
+        strategy: str | None = None,
+    ) -> OperatorDecisionsResponse:
+        """Return recent episodic decisions, newest first."""
+        rt = require_runtime()
+        bounded_limit = min(max(limit, 1), 200)
+        return OperatorDecisionsResponse(
+            decisions=rt.operator_decisions(
+                limit=bounded_limit,
+                instrument=instrument,
+                strategy=strategy,
+            )
+        )
+
+    @app.get(
+        "/talim/operator/backtests",
+        response_model=OperatorBacktestsResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_backtests(
+        strategy: str | None = None,
+        instrument: str | None = None,
+        triggered_by: str | None = None,
+        since: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> OperatorBacktestsResponse:
+        """Return recent backtest runs, newest first."""
+        rt = require_runtime()
+        bounded_limit = min(max(limit, 1), 200)
+        bounded_offset = max(offset, 0)
+        runs = rt.operator_backtests(
+            strategy=strategy,
+            instrument=instrument,
+            triggered_by=triggered_by,
+            since=since,
+            limit=bounded_limit,
+            offset=bounded_offset,
+        )
+        return OperatorBacktestsResponse(
+            runs=runs, limit=bounded_limit, offset=bounded_offset
+        )
+
+    @app.get(
+        "/talim/operator/backtests/{run_id}",
+        response_model=OperatorBacktestResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_backtest(run_id: int) -> OperatorBacktestResponse:
+        """Return one backtest run by id."""
+        rt = require_runtime()
+        try:
+            row = rt.operator_backtest(run_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"backtest run {run_id} not found")
+        return OperatorBacktestResponse(run=row)
+
+    @app.get(
+        "/talim/operator/strategies",
+        response_model=OperatorStrategiesListResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_strategies_list() -> OperatorStrategiesListResponse:
+        """Return active + available strategies."""
+        rt = require_runtime()
+        payload = rt.operator_strategies()
+        return OperatorStrategiesListResponse(**payload)
+
+    @app.post(
+        "/talim/operator/strategies/{name}/enable",
+        response_model=OperatorStrategyToggleResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_strategy_enable(name: str) -> OperatorStrategyToggleResponse:
+        rt = require_runtime()
+        try:
+            payload = rt.enable_strategy(name)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404, detail=f"strategy module not found for {name!r}"
+            )
+        return OperatorStrategyToggleResponse(
+            strategy=name, action="enable", **payload
+        )
+
+    @app.post(
+        "/talim/operator/strategies/{name}/disable",
+        response_model=OperatorStrategyToggleResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_strategy_disable(name: str) -> OperatorStrategyToggleResponse:
+        rt = require_runtime()
+        payload = rt.disable_strategy(name)
+        return OperatorStrategyToggleResponse(
+            strategy=name, action="disable", **payload
+        )
+
+    @app.get(
+        "/talim/operator/strategies/{name}/params",
+        response_model=OperatorStrategyParamsResponse,
+        response_model_by_alias=True,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_strategy_params(name: str) -> OperatorStrategyParamsResponse:
+        """Return the parameter schema and current values for one strategy."""
+        rt = require_runtime()
+        try:
+            payload = rt.operator_strategy_params(name)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"strategy {name!r} is not active")
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"strategy module not found for {name!r}")
+        return OperatorStrategyParamsResponse(
+            strategy=payload["strategy"],
+            schema=payload["schema"],
+            current=payload["current"],
+        )
 
     return app

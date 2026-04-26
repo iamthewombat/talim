@@ -3,6 +3,9 @@
 # 5-minute heartbeat: trigger a scan via the bridge API.
 */5 * * * 1-5 curl -fsS -X POST http://talim:8000/talim/trigger -H "X-Talim-Secret: ${TALIM_BRIDGE_SECRET}" >> /var/log/talim-cron.log 2>&1
 
+# 5-minute broker state sync, offset one minute after the scan.
+1-59/5 * * * 1-5 curl -fsS -X POST http://talim:8000/talim/sync?thread_id=cron-main -H "X-Talim-Secret: ${TALIM_BRIDGE_SECRET}" >> /var/log/talim-cron.log 2>&1
+
 # Nightly data update at 02:00 UTC weekdays — Databento ES futures (WP-28).
 0 2 * * 1-5 curl -fsS -X POST http://talim:8000/talim/trigger?thread_id=ingest-nightly -H "X-Talim-Secret: ${TALIM_BRIDGE_SECRET}" >> /var/log/talim-cron.log 2>&1
 

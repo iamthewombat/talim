@@ -25,7 +25,7 @@ class TestGraphBuild:
 class TestRouterBranching:
     def test_pending_signal_routes_to_risk_check(self):
         state = {"pending_signal": Signal(
-            instrument="ES", strategy="momentum-ES", side="long",
+            instrument="ES", strategy="momentum-US500", side="long",
             entry_price=5400.0, stop=5380.0, target=5440.0,
             rationale="test", regime_context="momentum",
         )}
@@ -36,7 +36,7 @@ class TestRouterBranching:
         assert route_from_router(state) == "strategy_update"
 
     def test_pending_backtest_routes_to_backtest_run(self):
-        state = {"pending_backtest": BacktestRequest(strategy_name="momentum-ES")}
+        state = {"pending_backtest": BacktestRequest(strategy_name="momentum-US500")}
         assert route_from_router(state) == "backtest_run"
 
     def test_user_message_routes_to_notify(self):
@@ -49,7 +49,7 @@ class TestRouterBranching:
     def test_signal_takes_priority_over_regime(self):
         state = {
             "pending_signal": Signal(
-                instrument="ES", strategy="momentum-ES", side="long",
+                instrument="ES", strategy="momentum-US500", side="long",
                 entry_price=5400.0, stop=5380.0, target=5440.0,
                 rationale="", regime_context="",
             ),
@@ -80,7 +80,7 @@ class TestCronPath:
         assert final.get("regime_changed") is False
 
     def test_cron_with_pending_backtest(self):
-        initial = {"pending_backtest": BacktestRequest(strategy_name="momentum-ES")}
+        initial = {"pending_backtest": BacktestRequest(strategy_name="momentum-US500")}
         final = cron_trigger(
             initial_state=initial, thread_id="cron-test-3"  # type: ignore[arg-type]
         )

@@ -318,7 +318,7 @@ Historical data is stored locally on the VPS. A nightly cron job appends the pre
 
 ```python
 {
-  "strategy": "momentum-ES",
+  "strategy": "momentum-US500",
   "param_a": {"stop_loss_pts": 22},
   "param_b": {"stop_loss_pts": 7},
   "matched_sessions": 67,
@@ -355,7 +355,7 @@ Four distinct memory stores. Assistant-side memory is separate from Talim's inte
 **Strategy markdown template:**
 
 ```markdown
-# Strategy: momentum-ES
+# Strategy: momentum-US500
 
 ## Purpose
 Trend-following on ES 5-min bars. Designed for momentum regimes (ADX > 25, ATR ratio 0.8–1.4).
@@ -426,12 +426,12 @@ Strategies live as code (Python) and documentation (Markdown). The two are linke
 
 ```
 /strategies/
-  momentum-ES/
+  momentum-US500/
     strategy.py        # live-runnable code
-    momentum-ES.md     # Talim's memory of this strategy
-  mean-reversion-ES/
+    momentum-US500.md     # Talim's memory of this strategy
+  mean-reversion-US500/
     strategy.py
-    mean-reversion-ES.md
+    mean-reversion-US500.md
   ...
 ```
 

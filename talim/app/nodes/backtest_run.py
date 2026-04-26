@@ -6,6 +6,7 @@ import logging
 
 from talim.app.state import TalimState
 from talim.backtest.engine import run_backtest
+from talim.backtest.history import BacktestHistory, default_history_path
 from talim.backtest.vectorbt_engine import (
     VectorbtUnsupported,
     run_vectorbt_backtest,
@@ -60,4 +61,16 @@ def backtest_run(state: TalimState) -> TalimState:
         len(results),
         results[0].sharpe_ratio if results else 0.0,
     )
+
+    try:
+        history = BacktestHistory(default_history_path())
+        history.record_results(
+            results,
+            request=req,
+            engine=engine_choice if engine_choice in {"on_bar", "vectorbt"} else "on_bar",
+            triggered_by="node",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("backtest_run: history recording failed", exc_info=True)
+
     return {"pending_backtest": None, "backtest_result": results}

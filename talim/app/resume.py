@@ -10,18 +10,24 @@ from talim.app.checkpointer import create_checkpointer
 logger = logging.getLogger("talim.app.resume")
 
 
-def resume_graph(thread_id: str, approved: bool, db_path: str = "./talim.db"):
+def resume_graph(
+    thread_id: str,
+    approved: bool,
+    db_path: str = "./talim.db",
+    checkpointer=None,
+):
     """Resume a HITL-paused graph with the user's decision.
 
     Args:
         thread_id: The thread the graph was running under.
         approved: True to route to `execute`, False to route to `notify` (rejection).
-        db_path: SQLite checkpoint file path.
+        db_path: SQLite checkpoint file path used when `checkpointer` is not supplied.
+        checkpointer: Optional shared SqliteSaver used by the live runtime.
 
     Returns:
         Final state dict after the graph runs to completion.
     """
-    cp = create_checkpointer(db_path)
+    cp = checkpointer or create_checkpointer(db_path)
     graph = build_graph(checkpointer=cp)
     config = {"configurable": {"thread_id": thread_id}}
 

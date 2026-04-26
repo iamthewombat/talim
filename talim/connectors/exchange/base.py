@@ -32,6 +32,8 @@ class Order:
     fill_price: float | None = None
     fill_time: datetime | None = None
     strategy: str = ""
+    stop_price: float | None = None
+    target_price: float | None = None
 
 
 class BaseExchange(ABC):
@@ -46,9 +48,28 @@ class BaseExchange(ABC):
         order_type: str = "market",
         limit_price: float | None = None,
         strategy: str = "",
+        stop_price: float | None = None,
+        target_price: float | None = None,
     ) -> Order:
         """Submit an order to the exchange. Returns the Order object."""
         ...
+
+    def close_position(
+        self,
+        position: Position,
+        qty: float | None = None,
+        strategy: str = "",
+    ) -> Order:
+        """Close an existing position using the venue's default close path."""
+        close_qty = position.qty if qty is None else qty
+        close_side = "sell" if position.side == "long" else "buy"
+        return self.place_order(
+            instrument=position.instrument,
+            side=close_side,
+            qty=close_qty,
+            order_type="market",
+            strategy=strategy or position.strategy,
+        )
 
     @abstractmethod
     def cancel_order(self, order_id: str) -> bool:

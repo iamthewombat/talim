@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Talim Operator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Talim Operator</h1>
+  <div class="controls">
+    <button id="refresh-btn" type="button">Refresh</button>
+    <span id="status-dot" class="dot unknown" title="Halt status"></span>
+    <span id="status-label">—</span>
+    <span class="sep">·</span>
+    <span id="auth-state" class="auth-locked">Locked (read-only)</span>
+    <button id="unlock-btn" type="button">Unlock</button>
+    <button id="lock-btn" type="button" hidden>Lock</button>
+    <span class="sep">·</span>
+    <span id="last-refresh" class="muted">never</span>
+  </div>
+</header>
+
+<main>
+  <section id="panel-status" class="panel">
+    <h2>Runtime</h2>
+    <div id="status-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section id="panel-pending" class="panel">
+    <h2>Pending HITL</h2>
+    <div id="pending-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section id="panel-positions" class="panel">
+    <h2>Open Positions</h2>
+    <div id="positions-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section id="panel-strategies" class="panel">
+    <h2>Strategies</h2>
+    <div id="strategies-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section id="panel-decisions" class="panel">
+    <h2>Recent Decisions</h2>
+    <form id="decisions-filter" class="filter-row">
+      <label>instrument <input name="instrument" type="text" placeholder="e.g. US500.cash"></label>
+      <label>strategy <input name="strategy" type="text" placeholder="e.g. momentum-US500"></label>
+      <label>limit <input name="limit" type="number" value="20" min="1" max="200"></label>
+      <button type="submit">Apply</button>
+    </form>
+    <div id="decisions-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section id="panel-backtests" class="panel">
+    <h2>Backtest History</h2>
+    <form id="backtests-filter" class="filter-row">
+      <label>strategy <input name="strategy" type="text"></label>
+      <label>instrument <input name="instrument" type="text"></label>
+      <label>limit <input name="limit" type="number" value="25" min="1" max="200"></label>
+      <button type="submit">Apply</button>
+    </form>
+    <div id="backtests-body" class="panel-body">Loading…</div>
+    <div id="backtest-detail" class="panel-body detail" hidden></div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -52,7 +52,7 @@ def test_full_market_day(tmp_path):
     # ------------------------------------------------------------------
     df = _trending_df()
     feed = MockPriceFeed(source=df, instrument="ES")
-    strategies = [load_strategy("momentum-ES")]
+    strategies = [load_strategy("momentum-US500")]
     configure_scanner(feed, strategies=strategies)
     feed.connect()
     feed.subscribe("ES")
@@ -96,7 +96,7 @@ def test_full_market_day(tmp_path):
     assert snap.next, "graph should be paused at HITL"
     pending: Signal = snap.values["pending_signal"]
     assert isinstance(pending, Signal)
-    assert pending.strategy == "momentum-ES"
+    assert pending.strategy == "momentum-US500"
 
     # 3) Risk check passed (otherwise we wouldn't be at HITL).
     # 4) HITL — format the embed and "post" to Discord.
@@ -149,18 +149,18 @@ def test_full_market_day(tmp_path):
     from talim.app.nodes.strategy_update import strategy_update
     regime_update = strategy_update({
         "regime": "high_vol",
-        "active_strategies": ["momentum-ES"],
-        "strategy_params": {"momentum-ES": {"ema_fast_period": 8}},
+        "active_strategies": ["momentum-US500"],
+        "strategy_params": {"momentum-US500": {"ema_fast_period": 8}},
     })
     assert regime_update["regime_changed"] is False
-    new_params = regime_update["strategy_params"]["momentum-ES"]
+    new_params = regime_update["strategy_params"]["momentum-US500"]
     assert new_params["ema_fast_period"] == 5  # from canned LLM proposal
 
     # ------------------------------------------------------------------
     # 9) Backtest request — run the engine directly (faster than via graph).
     # ------------------------------------------------------------------
     bt_req = BacktestRequest(
-        strategy_name="momentum-ES",
+        strategy_name="momentum-US500",
         param_variants=[{"ema_fast_period": 8}, {"ema_fast_period": 5}],
     )
     bt_results = run_backtest(
@@ -169,7 +169,7 @@ def test_full_market_day(tmp_path):
         df=df,
     )
     assert len(bt_results) == 2
-    assert all(r.strategy_name == "momentum-ES" for r in bt_results)
+    assert all(r.strategy_name == "momentum-US500" for r in bt_results)
 
     # ------------------------------------------------------------------
     # 10) End-of-day — verify episodic memory captured the decision.
@@ -177,7 +177,7 @@ def test_full_market_day(tmp_path):
     decisions = mem.query_decisions(instrument="ES")
     assert len(decisions) == 1
     d = decisions[0]
-    assert d["strategy"] == "momentum-ES"
+    assert d["strategy"] == "momentum-US500"
     assert d["approved"] == 1
     assert "regime" in d
 

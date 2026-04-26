@@ -23,7 +23,7 @@ from talim.models.signal import Signal
 
 def _signal(side: str = "long") -> Signal:
     return Signal(
-        instrument="ES", strategy="momentum-ES", side=side,
+        instrument="ES", strategy="momentum-US500", side=side,
         entry_price=5400.0, stop=5380.0, target=5440.0,
         rationale="EMA cross", regime_context="momentum",
     )
@@ -70,8 +70,8 @@ class TestFormatter:
 
     def test_backtest_embed_lists_all(self):
         results = [
-            BacktestResult("momentum-ES", 200.0, 1.5, -50.0, 0.6, 10, {"ema_fast_period": 5}),
-            BacktestResult("momentum-ES", 100.0, 0.9, -80.0, 0.4, 8, {"ema_fast_period": 8}),
+            BacktestResult("momentum-US500", 200.0, 1.5, -50.0, 0.6, 10, {"ema_fast_period": 5}),
+            BacktestResult("momentum-US500", 100.0, 0.9, -80.0, 0.4, 8, {"ema_fast_period": 8}),
         ]
         e = format_backtest_embed(results)
         assert "2 variant(s)" in e.description

@@ -13,6 +13,21 @@
       "supports_demo": true,
       "supports_live": true,
       "position_model": "netted"
+    },
+    "forexcom": {
+      "supports_market_orders": true,
+      "supports_marketable_limits": true,
+      "supports_limit_orders": true,
+      "supports_stop_orders": true,
+      "supports_attached_stops_limits": true,
+      "supports_guaranteed_stops": true,
+      "supports_partial_fills": true,
+      "supports_working_orders": true,
+      "supports_streaming_prices": true,
+      "supports_demo": true,
+      "supports_live": true,
+      "position_model": "fifo_stack",
+      "requires_quote_prior_to_order": true
     }
   },
   "instruments": [
@@ -48,6 +63,59 @@
           "venue_display_name": "Australia 200 Cash (A$1)",
           "product_type": "indices",
           "notes": "Resolved against IG demo on 2026-04-12. Market status returned as EDITS_ONLY; review tick size, point value, and session metadata before enabling trading."
+        },
+        "forexcom": {
+          "lookup_hint": "Australia 200",
+          "broker_symbol": "404709651",
+          "market_id": "404709651",
+          "expiry": "-",
+          "venue_display_name": "Australia 200 CFD",
+          "product_type": "index_cfd",
+          "notes": "Verified against FOREX.com demo on 2026-04-18. MarginFactor 5% (step bands above size 3600), IncrementSize 0.1, PriceDecimalPlaces 1, AUD."
+        }
+      }
+    },
+    {
+      "canonical_id": "US500.cash",
+      "display_name": "US 500 Cash CFD",
+      "asset_class": "index_cfd",
+      "quote_currency": "AUD",
+      "tick_size": null,
+      "price_precision": null,
+      "min_size": 1.0,
+      "size_step": null,
+      "point_value": 1.0,
+      "margin_rate": 0.05,
+      "financing_model": "overnight_cash_cfd",
+      "session": {
+        "timezone": "America/New_York",
+        "windows": [
+          {
+            "opens_day": "SUN",
+            "opens_time": "18:00",
+            "closes_day": "FRI",
+            "closes_time": "17:00"
+          }
+        ]
+      },
+      "venues": {
+        "ig": {
+          "lookup_hint": "US 500",
+          "broker_symbol": "IX.D.SPTRD.IFA.IP",
+          "market_id": "IX.D.SPTRD.IFA.IP",
+          "expiry": "-",
+          "venue_display_name": "US 500 Cash (A$1)",
+          "product_type": "indices",
+          "notes": "Resolved against IG demo on 2026-04-19 (WP-73). Market status EDITS_ONLY; lot size 1 A$/point."
+        },
+        "forexcom": {
+          "lookup_hint": "US SP 500",
+          "broker_symbol": "404706660",
+          "market_id": "404706660",
+          "expiry": "-",
+          "venue_display_name": "US SP 500 CFD",
+          "product_type": "index_cfd",
+          "notes": "Verified against FOREX.com demo on 2026-04-19 (WP-73). MarginFactor 5%, IncrementSize 0.1, PriceDecimalPlaces 1."
         }
       }
     },
@@ -83,6 +151,15 @@
           "venue_display_name": "Australia 200 (A$5)",
           "product_type": "indices",
           "notes": "Resolved against IG demo on 2026-04-12 with JUN-26 expiry. Market status returned as EDITS_ONLY; expiry roll handling and remaining contract metadata still need implementation."
+        },
+        "forexcom": {
+          "lookup_hint": "Australia 200",
+          "broker_symbol": "406055157",
+          "market_id": "406055157",
+          "expiry": "JUN-26",
+          "venue_display_name": "Australia 200 Jun 26 CFD",
+          "product_type": "index_cfd",
+          "notes": "Verified against FOREX.com demo on 2026-04-18. ExpiryUtc ~2026-06-16; roll handling required before expiry."
         }
       }
     }

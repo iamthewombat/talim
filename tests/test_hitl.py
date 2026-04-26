@@ -16,7 +16,7 @@ from talim.models.signal import Signal
 def _signal(side: str = "long") -> Signal:
     return Signal(
         instrument="ES",
-        strategy="momentum-ES",
+        strategy="momentum-US500",
         side=side,
         entry_price=5400.0,
         stop=5380.0,
@@ -33,7 +33,7 @@ def _signal(side: str = "long") -> Signal:
 class TestHitlNode:
     def test_format_includes_key_fields(self):
         msg = format_signal_message({"pending_signal": _signal(), "atr_current": 12.5})
-        assert "momentum-ES" in msg
+        assert "momentum-US500" in msg
         assert "LONG" in msg
         assert "5400" in msg
         assert "5380" in msg
@@ -47,7 +47,7 @@ class TestHitlNode:
     def test_node_sets_pending_notification(self):
         update = hitl_interrupt({"pending_signal": _signal(), "atr_current": 10.0})
         assert "pending_notification" in update
-        assert "momentum-ES" in update["pending_notification"]
+        assert "momentum-US500" in update["pending_notification"]
 
     def test_node_no_signal_rejects(self):
         update = hitl_interrupt({})
@@ -91,7 +91,7 @@ class TestFreezeAndResume:
         assert snap.next  # non-empty tuple means execution is paused
         # And the notification should already be staged.
         assert snap.values.get("pending_notification") is not None
-        assert "momentum-ES" in snap.values["pending_notification"]
+        assert "momentum-US500" in snap.values["pending_notification"]
 
     def test_resume_approved_routes_to_execute(self, tmp_path):
         db = str(tmp_path / "hitl.db")
@@ -115,7 +115,7 @@ class TestFreezeAndResume:
         assert final.get("signal_approved") is False
         # Routed through notify → response set (pass-through of HITL message)
         assert final.get("response_message") is not None
-        assert "momentum-ES" in final.get("response_message")
+        assert "momentum-US500" in final.get("response_message")
 
     def test_resume_persists_across_new_graph_instance(self, tmp_path):
         db = str(tmp_path / "hitl.db")

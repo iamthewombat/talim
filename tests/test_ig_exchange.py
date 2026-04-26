@@ -31,6 +31,8 @@ class TestIgExchange:
                 payload = request.content
                 assert b'"orderType":"MARKET"' in payload
                 assert b'"epic":"IX.D.ASX.IFT.IP"' in payload
+                assert b'"stopLevel":8050.0' in payload
+                assert b'"limitLevel":8200.0' in payload
                 return httpx.Response(200, json={"dealReference": "ref-market"})
             if request.url.path == "/gateway/deal/confirms/ref-market":
                 return httpx.Response(
@@ -74,11 +76,20 @@ class TestIgExchange:
             confirm_delay_s=0.0,
         )
 
-        order = exchange.place_order("AU200.cash", "buy", 1.5, strategy="momentum-AU200")
+        order = exchange.place_order(
+            "AU200.cash",
+            "buy",
+            1.5,
+            strategy="momentum-AU200",
+            stop_price=8050.0,
+            target_price=8200.0,
+        )
         assert order.order_id == "deal-market-1"
         assert order.instrument == "AU200.cash"
         assert order.status == OrderStatus.FILLED
         assert order.fill_price == 8123.4
+        assert order.stop_price == 8050.0
+        assert order.target_price == 8200.0
 
         fetched = exchange.get_order("deal-market-1")
         assert fetched is not None

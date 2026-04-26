@@ -1,0 +1,57 @@
+{
+  "recorded_at": "2026-04-19",
+  "instrument": "US500.cash",
+  "data_source": "forexcom",
+  "data_window": {
+    "5m": "2026-03-30 02:45 UTC → 2026-04-17 20:50 UTC (4000 bars, ~2.5 weeks)",
+    "1h": "2025-08-19 16:00 UTC → 2026-04-17 19:00 UTC (4000 bars, ~8 months)"
+  },
+  "baselines": [
+    {
+      "strategy": "momentum-US500",
+      "timeframe": "5m",
+      "params": {},
+      "net_pnl": -162.82,
+      "sharpe_ratio": -0.1056,
+      "max_drawdown": -245.65,
+      "win_rate": 0.29,
+      "total_trades": 100
+    },
+    {
+      "strategy": "momentum-US500",
+      "timeframe": "1h",
+      "params": {},
+      "net_pnl": -151.93,
+      "sharpe_ratio": -0.0304,
+      "max_drawdown": -473.38,
+      "win_rate": 0.2991,
+      "total_trades": 117
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "timeframe": "5m",
+      "params": {},
+      "net_pnl": -188.19,
+      "sharpe_ratio": -0.0939,
+      "max_drawdown": -243.86,
+      "win_rate": 0.5357,
+      "total_trades": 168
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "timeframe": "1h",
+      "params": {},
+      "net_pnl": -371.28,
+      "sharpe_ratio": -0.0613,
+      "max_drawdown": -766.53,
+      "win_rate": 0.5380,
+      "total_trades": 171
+    }
+  ],
+  "notes": [
+    "These are default-parameter baselines, not optimised results. Negative Sharpe is expected on out-of-the-box params and is the starting point for WP-74+ tuning.",
+    "PnL is in index points (A$1 per point for IG's Cash A$1 wrapper; FOREX.com's US SP 500 CFD follows similar economics).",
+    "5m window is only ~2.5 weeks because FOREX.com caps bar history at ~4000 per request. Extend via time-windowed pagination before drawing strong conclusions.",
+    "IG was the intended primary data source but the weekly historical-data allowance was exhausted on 2026-04-19. Re-run baselines against IG once the quota resets to cross-verify with FOREX.com."
+  ]
+}

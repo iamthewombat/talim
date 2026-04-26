@@ -7,7 +7,9 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      # Bind-mount so Redis AOF/RDB files live in ./redis and can be rsynced
+      # to a new host. See docs/vps-migration.md.
+      - ./redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -32,9 +34,45 @@ services:
       - TALIM_DISCORD_ALERTS_CHANNEL=${TALIM_DISCORD_ALERTS_CHANNEL:-}
       - TALIM_DISCORD_CHAT_CHANNEL=${TALIM_DISCORD_CHAT_CHANNEL:-}
       - TALIM_DISCORD_LOG_CHANNEL=${TALIM_DISCORD_LOG_CHANNEL:-}
+      - TALIM_EXCHANGE_MODE=${TALIM_EXCHANGE_MODE:-mock}
+      - TALIM_EXCHANGE_NAME=${TALIM_EXCHANGE_NAME:-}
+      - TALIM_PRICEFEED=${TALIM_PRICEFEED:-mock}
+      - TALIM_PRICEFEED_TIMEFRAME=${TALIM_PRICEFEED_TIMEFRAME:-5m}
+      - TALIM_CFD_REGISTRY_PATH=${TALIM_CFD_REGISTRY_PATH:-config/cfd_instruments.json}
+      - TALIM_INSTRUMENTS=${TALIM_INSTRUMENTS:-}
+      - TALIM_STRATEGIES=${TALIM_STRATEGIES:-}
+      - TALIM_DEFAULT_QTY=${TALIM_DEFAULT_QTY:-1}
+      - TALIM_BAR_WINDOW=${TALIM_BAR_WINDOW:-50}
+      - TALIM_CHECKPOINT_DB=${TALIM_CHECKPOINT_DB:-/app/state/talim_checkpoints.db}
+      - TALIM_EPISODIC_DB=${TALIM_EPISODIC_DB:-/app/state/episodic.db}
+      - TALIM_BACKTEST_HISTORY_DB=${TALIM_BACKTEST_HISTORY_DB:-/app/state/backtest_history.db}
+      - TALIM_BACKUP_DIR=${TALIM_BACKUP_DIR:-/app/backups}
+      - TALIM_STATE_DIR=${TALIM_STATE_DIR:-/app/state}
+      - TALIM_RISK_CONFIG=${TALIM_RISK_CONFIG:-config/risk.json}
+      - BINANCE_API_KEY=${BINANCE_API_KEY:-}
+      - BINANCE_API_SECRET=${BINANCE_API_SECRET:-}
+      - IG_API_KEY=${IG_API_KEY:-}
+      - IG_DEMO_API_KEY=${IG_DEMO_API_KEY:-}
+      - IG_IDENTIFIER=${IG_IDENTIFIER:-}
+      - IG_DEMO_LOGIN=${IG_DEMO_LOGIN:-}
+      - IG_PASSWORD=${IG_PASSWORD:-}
+      - IG_DEMO_PASSWORD=${IG_DEMO_PASSWORD:-}
+      - IG_CST=${IG_CST:-}
+      - IG_SECURITY_TOKEN=${IG_SECURITY_TOKEN:-}
+      - IG_ENVIRONMENT=${IG_ENVIRONMENT:-demo}
+      - FOREXDOTCOM_LOGIN=${FOREXDOTCOM_LOGIN:-}
+      - FOREXDOTCOM_PASSWORD=${FOREXDOTCOM_PASSWORD:-}
+      - FOREXDOTCOM_APP_KEY=${FOREXDOTCOM_APP_KEY:-}
+      - FOREXDOTCOM_ENVIRONMENT=${FOREXDOTCOM_ENVIRONMENT:-demo}
+      - FOREXDOTCOM_TRADING_ACCOUNT_ID=${FOREXDOTCOM_TRADING_ACCOUNT_ID:-}
+      - FOREXDOTCOM_CLIENT_ACCOUNT_ID=${FOREXDOTCOM_CLIENT_ACCOUNT_ID:-}
     volumes:
+      # All persistent Talim state is in bind-mounted host directories so a
+      # migration to another host is "rsync + docker compose up". See
+      # docs/vps-migration.md.
       - ./data:/app/data
-      - talim-state:/app/state
+      - ./state:/app/state
+      - ./backups:/app/backups
     expose:
       - "8000"
 
@@ -46,8 +84,14 @@ services:
       - talim
     environment:
       - TALIM_BRIDGE_SECRET=${TALIM_BRIDGE_SECRET}
+      - TALIM_STATE_DIR=${TALIM_STATE_DIR:-/app/state}
+      - TALIM_BACKUP_DIR=${TALIM_BACKUP_DIR:-/app/backups}
     volumes:
       - ./scripts/cron.txt:/app/cron.txt:ro
+      # Scheduler needs to see state + backups to run backup.sh inside its
+      # container (if enabled in cron.txt).
+      - ./state:/app/state
+      - ./backups:/app/backups
     command: ["supercronic", "/app/cron.txt"]
 
   nginx:
@@ -63,6 +107,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
 
-volumes:
-  talim-state:
-  redis-data:
+# Every persistent volume in this stack is a bind mount (./state, ./redis,
+# ./backups, ./data, ./nginx). This keeps the deployment migratable — host
+# moves are a `rsync` away. Do not reintroduce named volumes here. See
+# docs/vps-migration.md.

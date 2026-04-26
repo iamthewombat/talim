@@ -1,7 +1,7 @@
-# momentum-ES
+# momentum-US500
 
 ## Overview
-EMA crossover momentum strategy for E-mini S&P 500 futures (ES).
+EMA crossover momentum strategy for the US500 index CFD (S&P 500 cash, tradeable via IG/FOREX.com).
 
 ## Logic
 - **Entry long:** EMA(8) crosses above EMA(21)

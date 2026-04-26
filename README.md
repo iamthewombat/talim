@@ -2,7 +2,7 @@
 
 Agentic trading assistant powered by LangGraph. Talim monitors markets, detects regime changes, generates trade signals through pluggable strategies, routes them through risk checks and human-in-the-loop approval, executes against an exchange, and answers questions through a conversational bridge — all orchestrated as a stateful, checkpointed graph with persistent memory.
 
-**Status:** 31 work packages complete (19 PoC + 12 spec reconciliation) · 302 tests green · all 7 PoC success criteria verified ([docs/poc-verification.md](docs/poc-verification.md)).
+**Status:** 42 work packages complete · 468 tests green · all 7 PoC success criteria verified ([docs/poc-verification.md](docs/poc-verification.md)).
 
 ## Architecture
 
@@ -34,6 +34,7 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 │   │   POST /talim/converse   │        │   every 5m → cron_trigger   │      │
 │   │   POST /talim/resume     │        │   nightly → ingest scripts  │      │
 │   │   POST /talim/trigger    │        └──────────────┬──────────────┘      │
+│   │   POST /talim/sync       │                       │                     │
 │   │   X-Talim-Secret auth    │                       │                     │
 │   └────────────┬─────────────┘                       │                     │
 │                │                                     │                     │
@@ -67,8 +68,8 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 │   │                     │ │                   │ │                   │      │
 │   │  ▸ 9-feat fingerprnt│ │  ▸ BaseStrategy   │ │  ▸ qty / exposure │      │
 │   │  ▸ k-means classify │ │  ▸ on_bar(bar)    │ │  ▸ daily drawdown │      │
-│   │  ▸ Session matcher  │ │  ▸ momentum-ES    │ │  ▸ correlation    │      │
-│   │  ▸ Macro calendar   │ │  ▸ mean-rev-ES    │ │  ▸ kill switch    │      │
+│   │  ▸ Session matcher  │ │  ▸ momentum-US500 │ │  ▸ correlation    │      │
+│   │  ▸ Macro calendar   │ │  ▸ mean-rev-US500 │ │  ▸ kill switch    │      │
 │   │    (FOMC/CPI excl)  │ │  ▸ markdown store │ │                   │      │
 │   └─────────────────────┘ └───────────────────┘ └───────────────────┘      │
 │                                                                            │
@@ -191,8 +192,8 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 
 | Strategy | Logic | Stop | Target |
 |----------|-------|------|--------|
-| **momentum-ES** | EMA(8) / EMA(21) crossover | 1.5× ATR | 3.0× ATR |
-| **mean-reversion-ES** | Bollinger Band (20, 2σ) reversion | 2.0× ATR | 1.5× ATR |
+| **momentum-US500** | EMA(8) / EMA(21) crossover | 1.5× ATR | 3.0× ATR |
+| **mean-reversion-US500** | Bollinger Band (20, 2σ) reversion | 2.0× ATR | 1.5× ATR |
 | **momentum-AU200** | EMA(13) / EMA(34) crossover with ATR gap filter | 1.6× ATR | 2.8× ATR |
 
 ### Memory (`talim/memory/`)
@@ -205,9 +206,77 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 - `BarEvent`, `RegimeChangeEvent`, `SignalEvent`, `TradeEvent`
 
 ### Connectors (`talim/connectors/`)
-- **Price feeds:** `BasePriceFeed`, `MockPriceFeed` (DataFrame/Parquet/CSV replay), Binance ccxt.pro scaffold, IG CFD REST feed, normalisers, price-feed factory
-- **Exchanges:** `BaseExchange`, `MockExchange` (in-memory fills + position tracking with flip/partial-close), `CcxtExchange`, env credential loader
+- **Price feeds:** `BasePriceFeed`, `MockPriceFeed` (DataFrame/Parquet/CSV replay), Binance ccxt.pro scaffold, IG CFD REST feed, FOREX.com REST feed, normalisers, price-feed factory
+- **Exchanges:** `BaseExchange`, `MockExchange` (in-memory fills + position tracking with flip/partial-close), `CcxtExchange` for Binance/Bybit-style venues, first-party IG and FOREX.com CFD adapters, env credential loader
 - **Discord:** rich-embed formatter (signals/backtests/regimes/log), `ReactionHandler` mapping ✅/❌ to HITL resume, `TalimDiscordBot` discord.py shell
+
+### Current Venue Status
+
+- The current CFD path is AU200 via `ig` or `forexcom`, using the broker-neutral CFD registry and adapter layer.
+- Binance credentials are not required for the AU200 CFD path. `BINANCE_API_KEY` / `BINANCE_API_SECRET` are used only when `TALIM_EXCHANGE_MODE=testnet|live` and `TALIM_EXCHANGE_NAME=binance`.
+- `TALIM_PRICEFEED=binance` selects the public Binance ccxt.pro feed scaffold and does not consume the Binance API key/secret.
+- The default runtime remains `TALIM_EXCHANGE_MODE=mock`; adding broker credentials to `.env` does not activate them unless the exchange mode/name and execution context are wired accordingly.
+- Docker Compose explicitly forwards the supported broker env vars from `.env` into the `talim` container.
+
+### Runtime Bootstrap
+
+`talim.app.runtime.bootstrap_runtime()` is the live composition root used by the
+default FastAPI app. It reads `.env`/environment settings and wires:
+
+- selected exchange via `TALIM_EXCHANGE_MODE` / `TALIM_EXCHANGE_NAME`
+- selected price feed via `TALIM_PRICEFEED` / `TALIM_PRICEFEED_TIMEFRAME`
+- subscribed instruments from `TALIM_INSTRUMENTS`
+- loaded strategy packages from `TALIM_STRATEGIES`
+- default execution size from `TALIM_DEFAULT_QTY`
+- persistent graph checkpoints from `TALIM_CHECKPOINT_DB`
+- episodic decision memory from `TALIM_EPISODIC_DB`
+- risk rules from `TALIM_RISK_CONFIG`
+
+For `testnet` or `live`, `TALIM_INSTRUMENTS` and `TALIM_STRATEGIES` are
+required explicitly so Talim does not accidentally trade a default strategy.
+
+### Demo Execution Harness
+
+Before using real broker demo credentials, run the deterministic mock execution
+harness:
+
+```bash
+./.venv/bin/python scripts/run_demo_execution.py --state-dir state/demo-execution
+```
+
+It proves the runtime can complete scan -> HITL -> approve -> execute ->
+episodic memory -> reconcile with one paper order and zero reconciliation
+divergences. See [docs/live-demo-execution.md](docs/live-demo-execution.md).
+
+### Operator / OpenClaw API
+
+External operator clients can use the authenticated operator endpoints instead
+of reaching into checkpoints directly:
+
+- `GET /talim/operator/status`
+- `GET /talim/operator/pending?thread_id=cron-main`
+- `POST /talim/operator/decision`
+- `GET /talim/operator/positions`
+- `GET /talim/operator/decisions`
+- `POST /talim/sync?thread_id=cron-main`
+
+See [docs/openclaw-operator-interface.md](docs/openclaw-operator-interface.md).
+
+### OpenClaw Host Deployment
+
+If you're moving Talim onto the same host as OpenClaw, start with:
+
+- [docs/openclaw-talim-host-integration.md](docs/openclaw-talim-host-integration.md)
+- [docs/openclaw-host-cutover-checklist.md](docs/openclaw-host-cutover-checklist.md)
+- [docs/openclaw-secrets-and-env.md](docs/openclaw-secrets-and-env.md)
+
+### Runtime Sync / Reconciliation
+
+`POST /talim/sync` refreshes broker positions and P&L, runs the existing
+exchange-vs-memory-vs-state reconciliation check, and persists safe checkpoint
+updates for the requested thread. It deliberately skips checkpoint mutation
+while a HITL thread is paused so scheduled syncs cannot disturb a pending
+approve/reject decision. See [docs/runtime-sync.md](docs/runtime-sync.md).
 
 ### LangGraph Brain (`talim/app/`)
 The full graph topology:
@@ -269,7 +338,7 @@ Thin wrappers exposed over an MCP stdio server: `get_positions`, `get_pnl`, `run
 - Talim image runs `uvicorn talim.api.bridge:create_app --factory`
 - Nginx reverse proxy with optional TLS
 - `scripts/healthcheck.sh` verifies all services
-- `scripts/cron.txt` for the 5-minute heartbeat trigger and nightly data update
+- `scripts/cron.txt` for the 5-minute heartbeat trigger, offset broker-state sync, and nightly data update
 - `.env.example` documents every required env var
 
 ## Project Structure
@@ -284,8 +353,8 @@ talim/
 ├── bus/             # Redis Streams pub/sub
 ├── connectors/
 │   ├── discord/     # Bot, formatter, reaction handler
-│   ├── exchange/    # Mock + ccxt
-│   └── pricefeed/   # Mock + Binance + normaliser
+│   ├── exchange/    # Mock + ccxt + IG + FOREX.com
+│   └── pricefeed/   # Mock + Binance + IG + FOREX.com + normalisers
 ├── llm/             # Client (Claude + Ollama), prompts, mock
 ├── memory/          # Episodic, pattern, working (SQLite)
 ├── models/          # Bar, position, signal, backtest, state
@@ -293,9 +362,9 @@ talim/
 ├── risk/            # Configurable RiskRules
 └── strategy/        # BaseStrategy, loader, markdown store
 strategies/
-├── momentum-ES/
+├── momentum-US500/
 ├── momentum-AU200/
-└── mean-reversion-ES/
+└── mean-reversion-US500/
 tests/
 ├── e2e/test_market_day.py   # Full simulated market day
 └── test_*.py                # 16 unit/integration files (266 tests)
@@ -326,7 +395,8 @@ No external services required — Redis tests use `fakeredis`, SQLite uses tmp d
 
 ```bash
 cp .env.example .env
-# fill in TALIM_BRIDGE_SECRET (required) and ANTHROPIC_API_KEY etc.
+# fill in TALIM_BRIDGE_SECRET (required) and any selected venue credentials
+# default venue mode is mock; Binance keys are optional and ccxt-only
 
 docker compose up --build -d
 ./scripts/healthcheck.sh
@@ -339,7 +409,7 @@ The bridge is reachable at `http://localhost:8080/talim/health` (via nginx).
 `tests/e2e/test_market_day.py` exercises the complete pipeline against mocks:
 
 1. Startup wires scanner, risk rules, LLM, episodic memory, and `MockExchange`
-2. Scanner replays a sine-wave price tape; momentum-ES fires a signal
+2. Scanner replays a sine-wave price tape; momentum-US500 fires a signal
 3. Risk check passes; the graph pauses at `hitl_interrupt`
 4. The signal is rendered into a Discord embed and registered with `ReactionHandler`
 5. A ✅ reaction calls `resume_graph(approved=True)`; the graph runs `execute` and clears the pending signal

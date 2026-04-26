@@ -76,11 +76,11 @@ class TestMetrics:
 class TestEngine:
     def test_runs_with_default_params(self):
         df = _sine_df()
-        results = run_backtest("momentum-ES", param_variants=[{}], df=df)
+        results = run_backtest("momentum-US500", param_variants=[{}], df=df)
         assert len(results) == 1
         r = results[0]
         assert isinstance(r, BacktestResult)
-        assert r.strategy_name == "momentum-ES"
+        assert r.strategy_name == "momentum-US500"
         assert r.total_trades >= 1
 
     def test_two_variants_both_returned(self):
@@ -89,7 +89,7 @@ class TestEngine:
             {"ema_fast_period": 5, "ema_slow_period": 13},
             {"ema_fast_period": 8, "ema_slow_period": 21},
         ]
-        results = run_backtest("momentum-ES", param_variants=variants, df=df)
+        results = run_backtest("momentum-US500", param_variants=variants, df=df)
         assert len(results) == 2
         # Each variant tag is preserved.
         sent = {tuple(sorted(v.items())) for v in variants}
@@ -103,7 +103,7 @@ class TestEngine:
             {"ema_fast_period": 8, "ema_slow_period": 21},
             {"ema_fast_period": 12, "ema_slow_period": 34},
         ]
-        results = run_backtest("momentum-ES", param_variants=variants, df=df)
+        results = run_backtest("momentum-US500", param_variants=variants, df=df)
         sharpes = [r.sharpe_ratio for r in results]
         assert sharpes == sorted(sharpes, reverse=True)
 
@@ -118,7 +118,7 @@ class TestEngine:
             "close": np.full(n, 5000.0),
             "volume": np.full(n, 10000.0),
         })
-        results = run_backtest("momentum-ES", df=flat)
+        results = run_backtest("momentum-US500", df=flat)
         assert results[0].total_trades == 0
         assert results[0].net_pnl == 0.0
 
@@ -171,6 +171,24 @@ class TestDataLoader:
         with pytest.raises(FileNotFoundError):
             load_ohlcv(tmp_path, "NOPE")
 
+    def test_missing_timeframe_file_raises_without_fallback(self, tmp_path):
+        # Directory exists with a generic parquet but no <timeframe>.parquet.
+        sub = tmp_path / "US500.cash"
+        sub.mkdir()
+        _sine_df(20).to_parquet(sub / "some-other-day.parquet")
+        with pytest.raises(FileNotFoundError, match="No 1h parquet"):
+            load_ohlcv(tmp_path, "US500.cash", timeframe="1h")
+
+    def test_empty_parquet_raises(self, tmp_path):
+        sub = tmp_path / "US500.cash"
+        sub.mkdir()
+        empty = pd.DataFrame(
+            {"timestamp": pd.to_datetime([]), "open": [], "high": [], "low": [], "close": [], "volume": []}
+        )
+        empty.to_parquet(sub / "5m.parquet")
+        with pytest.raises(ValueError, match="empty"):
+            load_ohlcv(tmp_path, "US500.cash", timeframe="5m")
+
 
 # ---------------------------------------------------------------------------
 # Node + graph integration
@@ -185,14 +203,14 @@ class TestBacktestNode:
         (tmp_path / "ES.parquet").write_bytes(b"")  # placeholder, replaced below
         df.to_parquet(tmp_path / "ES.parquet")
         req = BacktestRequest(
-            strategy_name="momentum-ES",
+            strategy_name="momentum-US500",
             param_variants=[{}],
             data_dir=str(tmp_path),
         )
         update = backtest_run({"pending_backtest": req})
         assert update["pending_backtest"] is None
         assert isinstance(update["backtest_result"], list)
-        assert update["backtest_result"][0].strategy_name == "momentum-ES"
+        assert update["backtest_result"][0].strategy_name == "momentum-US500"
 
     def test_node_supports_au200_instrument_and_timeframe(self, tmp_path):
         df = _sine_df(300, freq="1h")
@@ -217,7 +235,7 @@ class TestBacktestNode:
         df = _sine_df()
         df.to_parquet(tmp_path / "ES.parquet")
         req = BacktestRequest(
-            strategy_name="momentum-ES",
+            strategy_name="momentum-US500",
             param_variants=[{}],
             data_dir=str(tmp_path),
         )

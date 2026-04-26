@@ -138,7 +138,7 @@ class TestCcxtExchangeMocked:
             "status": "closed",
             "average": 5005.0,
         }
-        order = exchange.place_order("ES", "buy", 1.0, strategy="momentum-ES")
+        order = exchange.place_order("ES", "buy", 1.0, strategy="momentum-US500")
         assert order.order_id == "ord-123"
         assert order.status == OrderStatus.FILLED
         assert order.fill_price == 5005.0

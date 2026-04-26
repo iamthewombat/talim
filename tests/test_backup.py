@@ -30,7 +30,7 @@ class TestBackupScript:
         mem.record_decision(
             timestamp="2025-06-15T10:00:00",
             instrument="ES",
-            strategy="momentum-ES",
+            strategy="momentum-US500",
             side="long",
             entry_price=5000.0,
             stop=4980.0,
@@ -64,7 +64,7 @@ class TestBackupScript:
             mem.record_decision(
                 timestamp=f"2025-06-15T10:0{i}:00",
                 instrument="ES",
-                strategy="momentum-ES",
+                strategy="momentum-US500",
                 side="long",
                 entry_price=5000.0 + i,
                 stop=4980.0,
@@ -96,8 +96,11 @@ class TestBackupScript:
 
 class TestDockerComposeAOF:
     def test_redis_aof_enabled_in_compose(self):
-        """Verify docker-compose.yml enables Redis AOF persistence."""
+        """Verify docker-compose.yml enables Redis AOF persistence and binds
+        the data dir to a host path that survives container recreation."""
         compose = Path("docker-compose.yml").read_text()
         assert "--appendonly" in compose
         assert "yes" in compose
-        assert "redis-data" in compose
+        # WP-47: redis state lives in ./redis (bind mount), not in the
+        # `redis-data` named volume that earlier WPs used.
+        assert "./redis:/data" in compose

@@ -102,6 +102,16 @@ def run_backtest(
     Returns:
         list[BacktestResult] sorted by sharpe_ratio descending.
     """
+    variants = param_variants or [{}]
+
+    # WP-72: validate every variant up front — before we touch disk — so a
+    # bad variant fails the run without loading data or burning CPU. Reuse
+    # one probe instance of the strategy; not used for simulation.
+    probe = load_strategy(strategy_name)
+    for variant in variants:
+        if variant:
+            probe.load_params(variant)
+
     if df is not None:
         data = load_dataframe(df)
     else:
@@ -112,7 +122,6 @@ def run_backtest(
             timeframe=timeframe,
         )
 
-    variants = param_variants or [{}]
     results: list[BacktestResult] = []
     for variant in variants:
         strategy = load_strategy(strategy_name)

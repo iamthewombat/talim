@@ -29,6 +29,7 @@ class TalimState(TypedDict, total=False):
     pending_signal: Signal | None
     signal_approved: bool | None  # HITL result
     active_positions: list[Position]
+    account_balance: float
     open_pnl: float  # mark-to-market P&L of open positions
     daily_pnl: float  # realised P&L for the current trading day
     last_action: str | None  # short tag describing the most recent action

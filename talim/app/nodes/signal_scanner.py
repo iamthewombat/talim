@@ -164,8 +164,12 @@ def signal_scanner(state: TalimState) -> TalimState:
     else:
         update["regime_changed"] = False
 
-    # Check active strategies for signals
-    active_names = state.get("active_strategies") or list(_context.strategies.keys())
+    # Check active strategies for signals. Distinguish "key missing" (use all
+    # loaded) from "key set to []" (operator disabled everything — WP-70).
+    if "active_strategies" in state:
+        active_names = list(state.get("active_strategies") or [])
+    else:
+        active_names = list(_context.strategies.keys())
     pending_signal = None
     for name in active_names:
         strat = _context.strategies.get(name)
