@@ -111,6 +111,42 @@ class TestForexcomPriceFeed:
         assert len(emitted) == 1
         assert calls["count"] == 2
 
+    def test_fetch_bars_before_uses_paged_history_endpoint(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/TradingApi/session":
+                return httpx.Response(200, json={"Session": "sess-1", "StatusCode": 1})
+            if request.url.path == "/TradingApi/market/404709651/barhistorybefore":
+                assert request.url.params["interval"] == "MINUTE"
+                assert request.url.params["span"] == "5"
+                assert request.url.params["toTimestampUTC"] == "1776459000"
+                assert request.url.params["maxResults"] == "4000"
+                assert request.url.params["priceType"] == "BID"
+                return httpx.Response(
+                    200,
+                    json={
+                        "PriceBars": [
+                            _bar(1776458400000, open_=1.0, high=1.5, low=0.9, close=1.2, volume=5),
+                            _bar(1776458700000, open_=1.2, high=1.4, low=1.1, close=1.3, volume=7),
+                        ]
+                    },
+                )
+            raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+        feed = ForexcomPriceFeed(
+            credentials=_creds(),
+            timeframe="5m",
+            registry=load_default_registry(),
+            client=_mock_client(handler),
+        )
+
+        bars = feed.fetch_bars_before(
+            "AU200.cash",
+            to_timestamp_utc=1776459000,
+            count=5000,
+            price_type="bid",
+        )
+        assert [bar.close for bar in bars] == [1.2, 1.3]
+
     def test_unsupported_timeframe_raises(self):
         with pytest.raises(ValueError):
             ForexcomPriceFeed(

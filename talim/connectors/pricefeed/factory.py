@@ -31,8 +31,18 @@ def create_pricefeed(
     if name == "mock":
         from talim.connectors.pricefeed.mock import MockPriceFeed
 
-        logger.info("pricefeed factory: using MockPriceFeed(timeframe=%s)", timeframe)
-        return MockPriceFeed(timeframe=timeframe)
+        instruments = [
+            item.strip()
+            for item in os.environ.get("TALIM_INSTRUMENTS", "").split(",")
+            if item.strip()
+        ]
+        instrument = instruments[0] if instruments else "ES"
+        logger.info(
+            "pricefeed factory: using MockPriceFeed(instrument=%s, timeframe=%s)",
+            instrument,
+            timeframe,
+        )
+        return MockPriceFeed(instrument=instrument, timeframe=timeframe)
 
     if name == "binance":
         from talim.connectors.pricefeed.binance import BinancePriceFeed

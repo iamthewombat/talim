@@ -481,6 +481,54 @@ def _load_risk_rules(path: Path | None) -> RiskRules:
         raise RuntimeConfigError(f"failed to load risk config {path}: {e}") from e
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_mock_execution_data(n: int = 180, freq: str = "5min") -> Any:
+    """Create deterministic mock bars that make the baseline momentum strategy fire."""
+    import numpy as np
+    import pandas as pd
+
+    close = 5000.0 + 60.0 * np.sin(np.arange(n) * 0.15)
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2025-06-15 09:30", periods=n, freq=freq),
+        "open": close,
+        "high": close + 5.0,
+        "low": close - 5.0,
+        "close": close,
+        "volume": np.full(n, 10_000.0),
+    })
+
+
+def _seed_mock_demo_data(config: RuntimeConfig, exchange: Any, price_feed: Any) -> None:
+    """Optionally warm the mock runtime so HTTP HITL validation can run end-to-end."""
+    if config.exchange_mode != "mock" or config.pricefeed_name != "mock":
+        return
+    if not _env_bool("TALIM_MOCK_DEMO_DATA"):
+        return
+    if not all(hasattr(price_feed, name) for name in ("load", "connect", "replay")):
+        logger.warning("runtime: TALIM_MOCK_DEMO_DATA requested but price feed is not loadable")
+        return
+
+    price_feed.load(_build_mock_execution_data())
+    price_feed.connect()
+    price_feed.replay()
+
+    if hasattr(exchange, "set_fill_price"):
+        fill_price = _env_float("TALIM_MOCK_FILL_PRICE", 5000.0)
+        for instrument in config.instruments or ("ES",):
+            exchange.set_fill_price(instrument, fill_price)
+
+    logger.info(
+        "runtime: loaded deterministic mock demo data for instruments=%s",
+        list(config.instruments),
+    )
+
+
 def bootstrap_runtime(config: RuntimeConfig | None = None) -> Runtime:
     """Create and wire the runtime according to env/config."""
     config = config or RuntimeConfig.from_env()
@@ -510,6 +558,7 @@ def bootstrap_runtime(config: RuntimeConfig | None = None) -> Runtime:
         strategies=strategies,
         bar_window=config.bar_window,
     )
+    _seed_mock_demo_data(config, exchange, price_feed)
     configure_execute(
         exchange,
         episodic=episodic,

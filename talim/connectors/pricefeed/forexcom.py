@@ -125,6 +125,44 @@ class ForexcomPriceFeed(ForexcomDiscoveryClient, BasePriceFeed):
         bars.sort(key=lambda bar: bar.timestamp)
         return bars
 
+    def fetch_bars_before(
+        self,
+        instrument: str,
+        *,
+        to_timestamp_utc: int,
+        count: int = 4000,
+        price_type: str = "MID",
+    ) -> list[OHLCVBar]:
+        """Fetch completed bars before ``to_timestamp_utc`` using barhistorybefore.
+
+        ``to_timestamp_utc`` is epoch seconds. FOREX.com caps ``maxResults`` at
+        4000, so callers that need longer ranges should page backwards by
+        passing the earliest returned bar's timestamp as the next ``to`` value.
+        """
+
+        self._ensure_connected()
+        market_id = self._market_id(instrument)
+        interval, span = FOREXCOM_TIMEFRAME_MAP[self._timeframe]
+        response = self._client.get(
+            f"/market/{market_id}/barhistorybefore",
+            params={
+                "interval": interval,
+                "span": span,
+                "toTimestampUTC": to_timestamp_utc,
+                "maxResults": min(max(1, count), 4000),
+                "priceType": price_type.upper(),
+            },
+            headers=self._headers(authenticated=True),
+        )
+        self._raise_for_status(response, f"fetch FOREX.com bars before date for {instrument}")
+        payload: dict[str, Any] = response.json()
+        bars = [
+            normalise_forexcom_price_bar(item, instrument=instrument, timeframe=self._timeframe)
+            for item in payload.get("PriceBars", [])
+        ]
+        bars.sort(key=lambda bar: bar.timestamp)
+        return bars
+
     def _ensure_connected(self) -> None:
         if not self.is_connected:
             self.connect()
