@@ -9,6 +9,7 @@ import sys
 
 from talim.backtest.engine import run_backtest
 from talim.backtest.history import BacktestHistory, default_history_path
+from talim.backtest.sizing import BacktestSizingConfig
 from talim.models.backtest import BacktestRequest
 from talim.strategy.params import StrategyParamError
 
@@ -51,6 +52,47 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Optional free-text notes attached to each history row",
     )
+    parser.add_argument(
+        "--initial-capital",
+        type=float,
+        default=100_000.0,
+        help="Starting capital for return and position sizing calculations",
+    )
+    parser.add_argument(
+        "--sizing-mode",
+        choices=("fixed_qty", "risk_pct"),
+        default="fixed_qty",
+        help="Position sizing model to use for simulated trades",
+    )
+    parser.add_argument(
+        "--fixed-qty",
+        type=float,
+        default=1.0,
+        help="Quantity per trade when --sizing-mode=fixed_qty",
+    )
+    parser.add_argument(
+        "--risk-per-trade-pct",
+        type=float,
+        default=0.01,
+        help="Fraction of available capital to risk per trade when --sizing-mode=risk_pct",
+    )
+    parser.add_argument(
+        "--max-position-qty",
+        type=float,
+        default=None,
+        help="Optional cap on quantity per simulated trade",
+    )
+    parser.add_argument(
+        "--max-total-exposure",
+        type=float,
+        default=None,
+        help="Optional cap on notional exposure per simulated trade",
+    )
+    parser.add_argument(
+        "--no-compound",
+        action="store_true",
+        help="Disable compounding for risk_pct sizing",
+    )
     return parser
 
 
@@ -63,17 +105,30 @@ def main() -> int:
         return 2
 
     try:
+        sizing = BacktestSizingConfig(
+            initial_capital=args.initial_capital,
+            mode=args.sizing_mode,
+            fixed_qty=args.fixed_qty,
+            risk_per_trade_pct=args.risk_per_trade_pct,
+            max_position_qty=args.max_position_qty,
+            max_total_exposure=args.max_total_exposure,
+            compound=not args.no_compound,
+        )
         results = run_backtest(
             strategy_name=args.strategy,
             instrument=args.instrument,
             timeframe=args.timeframe,
             data_dir=args.data_dir,
             param_variants=variants,
+            sizing=sizing,
         )
     except StrategyParamError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except (FileNotFoundError, ValueError) as exc:
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
@@ -106,6 +161,15 @@ def main() -> int:
 
     payload = {
         "results": [result.to_dict() for result in results],
+        "sizing": {
+            "initial_capital": sizing.initial_capital,
+            "mode": sizing.mode,
+            "fixed_qty": sizing.fixed_qty,
+            "risk_per_trade_pct": sizing.risk_per_trade_pct,
+            "max_position_qty": sizing.max_position_qty,
+            "max_total_exposure": sizing.max_total_exposure,
+            "compound": sizing.compound,
+        },
     }
     if run_ids:
         payload["run_ids"] = run_ids

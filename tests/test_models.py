@@ -224,6 +224,8 @@ class TestTalimState:
         "regime",
         "regime_fingerprint",
         "regime_changed",
+        "regime_candidate",
+        "regime_candidate_count",
         # Signals & trading
         "pending_signal",
         "signal_approved",
@@ -271,6 +273,8 @@ class TestTalimState:
             "regime": "momentum",
             "regime_fingerprint": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
             "regime_changed": False,
+            "regime_candidate": None,
+            "regime_candidate_count": 0,
             "pending_signal": _make_signal(),
             "signal_approved": None,
             "active_positions": [_make_position()],

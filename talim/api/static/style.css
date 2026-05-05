@@ -176,3 +176,184 @@ pre {
 .pnl-neg { color: var(--bad); }
 
 .error { color: var(--bad); }
+
+a.nav-link {
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+a.nav-link:hover { border-color: var(--accent); }
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.panel-title-row h2 { margin-bottom: 0; }
+
+body.backtests-page { padding-bottom: 64px; }
+.backtests-main {
+  display: block;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 20px;
+}
+.mobile-tabs {
+  position: sticky;
+  top: 57px;
+  z-index: 9;
+  display: flex;
+  gap: 8px;
+  padding: 8px 20px;
+  background: rgba(15, 17, 21, 0.96);
+  border-bottom: 1px solid var(--panel-border);
+  overflow-x: auto;
+}
+.mobile-tabs .tab {
+  flex: 1 0 auto;
+  min-width: 84px;
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+.mobile-tabs .tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(79, 163, 255, 0.08);
+}
+.bt-view { display: none; }
+.bt-view.active { display: block; }
+.sticky-filter {
+  position: sticky;
+  top: 108px;
+  z-index: 8;
+  margin-bottom: 12px;
+}
+button.compact { padding: 3px 8px; }
+.runs-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.run-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+}
+.run-card:hover,
+.run-card.selected {
+  border-color: var(--accent);
+  background: rgba(79, 163, 255, 0.06);
+}
+.run-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.metric {
+  background: rgba(15, 17, 21, 0.72);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 0;
+}
+.metric span,
+.metric strong { display: block; }
+.metric strong { margin-top: 2px; font-size: 16px; overflow-wrap: anywhere; }
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.chart-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+.chart-wrap canvas {
+  display: block;
+  max-width: 100%;
+  min-width: 620px;
+}
+.detail-panel h3 { margin: 14px 0 8px; }
+.detail-metrics { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.empty-state { text-align: left; }
+.empty-state h2 { color: var(--fg); text-transform: none; letter-spacing: 0; font-size: 18px; }
+select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 5px 8px;
+}
+
+@media (max-width: 640px) {
+  header { padding: 10px 12px; }
+  header h1 { width: 100%; }
+  .controls { width: 100%; }
+  main { grid-template-columns: 1fr; padding: 12px; }
+  .backtests-main { padding: 12px; }
+  .mobile-tabs { top: 92px; padding: 8px 12px; }
+  .sticky-filter { top: 142px; }
+  .filter-row.collapsible:not(.open) { display: none; }
+  .filter-row label,
+  .filter-row input,
+  .filter-row button { width: 100%; }
+  .runs-list { grid-template-columns: 1fr; }
+  .metric-strip { grid-template-columns: 1fr 1fr 1fr; }
+  .chart-wrap canvas { min-width: 540px; }
+  table { display: block; overflow-x: auto; }
+}
+.param-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+.chip {
+  border: 1px solid var(--panel-border);
+  background: rgba(79, 163, 255, 0.06);
+  border-radius: 999px;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.filter-row select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font-size: 13px;
+  min-width: 120px;
+}
+
+@media (max-width: 640px) {
+  .filter-row select { width: 100%; }
+}

@@ -21,9 +21,11 @@ class TalimState(TypedDict, total=False):
     atr_ratio: float  # current ATR vs historical average
 
     # --- Regime (updated by signal_scanner) ---
-    regime: str  # e.g. "momentum", "mean_reversion", "high_vol", "ranging"
+    regime: str  # stable regime: "momentum", "mean_reversion", "high_vol", "ranging"
     regime_fingerprint: list[float]  # 6-feature vector (serialised from np.ndarray)
     regime_changed: bool
+    regime_candidate: str | None  # pending new label awaiting persistence confirmation
+    regime_candidate_count: int  # consecutive scans supporting the candidate
 
     # --- Signals & trading ---
     pending_signal: Signal | None

@@ -1,31 +1,51 @@
 "use strict";
 
-const SECRET_STORAGE_KEY = "talim.operator.secret";
 const THREAD_ID = "cron-main";
 const REFRESH_INTERVAL_MS = 15000;
 
 const state = {
-  secret: sessionStorage.getItem(SECRET_STORAGE_KEY) || null,
-  unlocked: false, // writes require unlock (task #17)
+  authenticated: false,
+  unlocked: false, // writes require an explicit per-tab unlock (task #17)
   timer: null,
   decisionsFilters: { instrument: "", strategy: "", limit: 20 },
   backtestsFilters: { strategy: "", instrument: "", limit: 25 },
 };
 
-function getSecret() { return state.secret; }
+async function refreshSession() {
+  try {
+    const resp = await fetch("/talim/auth/session", { credentials: "same-origin" });
+    const body = await resp.json();
+    state.authenticated = !!body.authenticated;
+    if (!state.authenticated) state.unlocked = false;
+  } catch (_) {
+    state.authenticated = false;
+    state.unlocked = false;
+  }
+}
 
-function setSecret(value) {
-  state.secret = value;
-  if (value) sessionStorage.setItem(SECRET_STORAGE_KEY, value);
-  else sessionStorage.removeItem(SECRET_STORAGE_KEY);
+async function loginWithSecret(secret) {
+  const resp = await fetch("/talim/auth/login", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret }),
+  });
+  let body = null;
+  try { body = await resp.json(); } catch (_) { body = null; }
+  if (!resp.ok) {
+    const err = new Error((body && body.detail) || `HTTP ${resp.status}`);
+    err.status = resp.status;
+    err.body = body;
+    throw err;
+  }
+  state.authenticated = true;
+  state.unlocked = false;
 }
 
 async function api(path, options = {}) {
   const headers = Object.assign({}, options.headers || {});
-  const secret = getSecret();
-  if (secret) headers["X-Talim-Secret"] = secret;
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-  const resp = await fetch(path, Object.assign({}, options, { headers }));
+  const resp = await fetch(path, Object.assign({}, options, { headers, credentials: "same-origin" }));
   let body = null;
   try { body = await resp.json(); } catch (_) { body = null; }
   if (!resp.ok) {
@@ -90,12 +110,12 @@ function fmtTs(value) {
 function renderError(node, err) {
   clear(node);
   const msg = err && err.status === 401
-    ? "unauthorized — click Unlock and paste TALIM_BRIDGE_SECRET"
+    ? "unauthorized — click Sign in and paste TALIM_BRIDGE_SECRET once"
     : (err && err.message) || "error";
   node.appendChild(el("div", { class: "error", text: msg }));
 }
 
-function writesAllowed() { return !!state.secret && state.unlocked; }
+function writesAllowed() { return state.authenticated && state.unlocked; }
 
 // ---------------------------------------------------------------------------
 // Runtime status
@@ -388,7 +408,7 @@ async function refreshBacktests() {
     const table = el("table");
     const thead = el("thead");
     const head = el("tr");
-    for (const h of ["id", "created", "strategy", "instrument", "tf", "trades", "net P&L", "Sharpe", "max DD", "win %", "trigger"]) {
+    for (const h of ["id", "created", "strategy", "instrument", "tf", "trades", "net P&L", "return %", "Sharpe", "max DD", "win %", "trigger", "status"]) {
       head.appendChild(el("th", { text: h }));
     }
     thead.appendChild(head);
@@ -403,10 +423,12 @@ async function refreshBacktests() {
       row.appendChild(el("td", { text: r.timeframe || "—" }));
       row.appendChild(el("td", { text: String(r.total_trades == null ? "—" : r.total_trades) }));
       row.appendChild(el("td", { text: fmtSigned(r.net_pnl), class: pnlClass(r.net_pnl) }));
+      row.appendChild(el("td", { text: r.return_pct == null ? "—" : (Number(r.return_pct) * 100).toFixed(2) + "%", class: pnlClass(r.return_pct) }));
       row.appendChild(el("td", { text: fmtNum(r.sharpe_ratio, 4) }));
       row.appendChild(el("td", { text: fmtSigned(r.max_drawdown), class: pnlClass(r.max_drawdown) }));
       row.appendChild(el("td", { text: r.win_rate == null ? "—" : (Number(r.win_rate) * 100).toFixed(1) + "%" }));
       row.appendChild(el("td", { text: r.triggered_by || "—" }));
+      row.appendChild(el("td", { text: r.status || "—" }));
       tbody.appendChild(row);
     }
     table.appendChild(tbody);
@@ -434,10 +456,17 @@ async function showBacktestDetail(runId) {
     push("instrument", run.instrument);
     push("timeframe", run.timeframe);
     push("engine", run.engine);
+    push("period_start", run.period_start);
+    push("period_end", run.period_end);
     push("triggered_by", run.triggered_by);
+    push("status", run.status);
+    push("artifact_path", run.artifact_path);
     push("trades", run.total_trades);
     push("net P&L", fmtSigned(run.net_pnl));
+    push("return", run.return_pct == null ? "—" : (Number(run.return_pct) * 100).toFixed(2) + "%");
     push("Sharpe", fmtNum(run.sharpe_ratio, 4));
+    push("Sortino", fmtNum(run.sortino_ratio, 4));
+    push("profit factor", fmtNum(run.profit_factor, 4));
     push("max drawdown", fmtSigned(run.max_drawdown));
     push("win rate", run.win_rate == null ? "—" : (Number(run.win_rate) * 100).toFixed(2) + "%");
     if (run.notes) push("notes", run.notes);
@@ -466,12 +495,12 @@ function syncAuthUi() {
   const authState = document.getElementById("auth-state");
   const unlockBtn = document.getElementById("unlock-btn");
   const lockBtn = document.getElementById("lock-btn");
-  if (!state.secret) {
-    authState.textContent = "Locked — set secret to read";
+  if (!state.authenticated) {
+    authState.textContent = "Locked — sign in to read";
     authState.className = "auth-locked";
     unlockBtn.hidden = false;
     lockBtn.hidden = true;
-    unlockBtn.textContent = "Set secret";
+    unlockBtn.textContent = "Sign in";
   } else if (!state.unlocked) {
     authState.textContent = "Read-only (writes locked)";
     authState.className = "auth-locked";
@@ -483,22 +512,27 @@ function syncAuthUi() {
     authState.className = "auth-unlocked";
     unlockBtn.hidden = true;
     lockBtn.hidden = false;
+    lockBtn.textContent = "Lock writes";
   }
 }
 
 function bindHeader() {
   document.getElementById("refresh-btn").addEventListener("click", refreshAll);
-  document.getElementById("unlock-btn").addEventListener("click", () => {
-    if (!state.secret) {
-      const v = window.prompt("Paste the TALIM_BRIDGE_SECRET value:");
+  document.getElementById("unlock-btn").addEventListener("click", async () => {
+    if (!state.authenticated) {
+      const v = window.prompt("Paste the TALIM_BRIDGE_SECRET value once for this browser session:");
       if (v) {
-        setSecret(v.trim());
-        syncAuthUi();
-        refreshAll();
+        try {
+          await loginWithSecret(v.trim());
+          syncAuthUi();
+          refreshAll();
+        } catch (err) {
+          window.alert((err && err.message) || "Sign in failed");
+        }
       }
       return;
     }
-    if (confirm("Unlock write actions (approve/reject, halt, strategy toggles) for this session?")) {
+    if (confirm("Unlock write actions (approve/reject, halt, strategy toggles) for this tab?")) {
       state.unlocked = true;
       syncAuthUi();
       refreshAll();
@@ -511,7 +545,6 @@ function bindHeader() {
       refreshAll();
       return;
     }
-    setSecret(null);
     syncAuthUi();
     refreshAll();
   });
@@ -562,9 +595,10 @@ function startAutoRefresh() {
   state.timer = setInterval(refreshAll, REFRESH_INTERVAL_MS);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   bindHeader();
   bindFilters();
+  await refreshSession();
   syncAuthUi();
   refreshAll();
   startAutoRefresh();

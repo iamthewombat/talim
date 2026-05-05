@@ -6,12 +6,19 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from talim.api.auth import require_secret
+from talim.api.auth import (
+    clear_session_cookie,
+    require_secret,
+    session_max_age_seconds,
+    set_session_cookie,
+    verify_secret,
+    verify_session_token,
+)
 from talim.metrics import METRICS
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -65,6 +72,15 @@ class HaltResponse(BaseModel):
     halted: bool
 
 
+class DashboardLoginRequest(BaseModel):
+    secret: str = Field(..., min_length=1)
+
+
+class DashboardSessionResponse(BaseModel):
+    authenticated: bool
+    max_age_seconds: int
+
+
 class OperatorStatusResponse(BaseModel):
     halted: bool
     runtime: dict[str, Any]
@@ -113,6 +129,11 @@ class OperatorBacktestsResponse(BaseModel):
     runs: list[dict[str, Any]] = Field(default_factory=list)
     limit: int
     offset: int
+
+
+class OperatorBacktestOutcomesResponse(BaseModel):
+    outcomes: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int
 
 
 class OperatorBacktestResponse(BaseModel):
@@ -184,6 +205,33 @@ def create_app(
     @app.get("/talim/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/talim/auth/session", response_model=DashboardSessionResponse)
+    def dashboard_session(
+        talim_dashboard_session: str | None = Cookie(default=None, alias="talim_dashboard_session"),
+    ) -> DashboardSessionResponse:
+        return DashboardSessionResponse(
+            authenticated=verify_session_token(talim_dashboard_session),
+            max_age_seconds=session_max_age_seconds(),
+        )
+
+    @app.post("/talim/auth/login", response_model=DashboardSessionResponse)
+    def dashboard_login(req: DashboardLoginRequest, response: Response) -> DashboardSessionResponse:
+        if not verify_secret(req.secret):
+            raise HTTPException(status_code=401, detail="invalid Talim bridge secret")
+        set_session_cookie(response)
+        return DashboardSessionResponse(
+            authenticated=True,
+            max_age_seconds=session_max_age_seconds(),
+        )
+
+    @app.post("/talim/auth/logout", response_model=DashboardSessionResponse)
+    def dashboard_logout(response: Response) -> DashboardSessionResponse:
+        clear_session_cookie(response)
+        return DashboardSessionResponse(
+            authenticated=False,
+            max_age_seconds=session_max_age_seconds(),
+        )
 
     if _STATIC_DIR.is_dir():
         app.mount(
@@ -360,6 +408,8 @@ def create_app(
         strategy: str | None = None,
         instrument: str | None = None,
         triggered_by: str | None = None,
+        status: str | None = None,
+        timeframe: str | None = None,
         since: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -372,12 +422,42 @@ def create_app(
             strategy=strategy,
             instrument=instrument,
             triggered_by=triggered_by,
+            status=status,
+            timeframe=timeframe,
             since=since,
             limit=bounded_limit,
             offset=bounded_offset,
         )
         return OperatorBacktestsResponse(
             runs=runs, limit=bounded_limit, offset=bounded_offset
+        )
+
+    @app.get(
+        "/talim/operator/backtests/outcomes",
+        response_model=OperatorBacktestOutcomesResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_backtest_outcomes(
+        strategy: str | None = None,
+        instrument: str | None = None,
+        status: str | None = None,
+        timeframe: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+    ) -> OperatorBacktestOutcomesResponse:
+        """Return grouped strategy outcome summaries, not raw run rows."""
+        rt = require_runtime()
+        bounded_limit = min(max(limit, 1), 500)
+        return OperatorBacktestOutcomesResponse(
+            outcomes=rt.operator_backtest_outcomes(
+                strategy=strategy,
+                instrument=instrument,
+                status=status,
+                timeframe=timeframe,
+                since=since,
+                limit=bounded_limit,
+            ),
+            limit=bounded_limit,
         )
 
     @app.get(

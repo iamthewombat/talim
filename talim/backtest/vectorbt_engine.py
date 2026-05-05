@@ -109,6 +109,10 @@ def _run_one(
             )
         )
     m = compute_metrics(trades)
+    period_start = str(df["timestamp"].iloc[0]) if "timestamp" in df and len(df) else ""
+    period_end = str(df["timestamp"].iloc[-1]) if "timestamp" in df and len(df) else ""
+    basis = float(df["close"].iloc[0]) if "close" in df and len(df) else 0.0
+    return_pct = float(m["net_pnl"] / basis) if basis else 0.0
     return BacktestResult(
         strategy_name=strategy_name,
         net_pnl=m["net_pnl"],
@@ -117,6 +121,11 @@ def _run_one(
         win_rate=m["win_rate"],
         total_trades=m["total_trades"],
         param_variant=dict(params),
+        return_pct=return_pct,
+        sortino_ratio=m.get("sortino_ratio", 0.0),
+        profit_factor=m.get("profit_factor", 0.0),
+        period_start=period_start,
+        period_end=period_end,
     )
 
 

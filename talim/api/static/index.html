@@ -10,6 +10,7 @@
 <header>
   <h1>Talim Operator</h1>
   <div class="controls">
+    <a class="nav-link" href="/talim/dashboard/backtests.html">Backtests</a>
     <button id="refresh-btn" type="button">Refresh</button>
     <span id="status-dot" class="dot unknown" title="Halt status"></span>
     <span id="status-label">—</span>
@@ -55,7 +56,10 @@
   </section>
 
   <section id="panel-backtests" class="panel">
-    <h2>Backtest History</h2>
+    <div class="panel-title-row">
+      <h2>Backtest History</h2>
+      <a class="nav-link" href="/talim/dashboard/backtests.html">Open page</a>
+    </div>
     <form id="backtests-filter" class="filter-row">
       <label>strategy <input name="strategy" type="text"></label>
       <label>instrument <input name="instrument" type="text"></label>

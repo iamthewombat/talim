@@ -43,6 +43,13 @@ class BacktestResult:
     total_trades: int
     param_variant: dict = field(default_factory=dict)
     matched_dates: list[date] = field(default_factory=list)
+    return_pct: float = 0.0
+    sortino_ratio: float = 0.0
+    profit_factor: float = 0.0
+    period_start: str = ""
+    period_end: str = ""
+    status: str = "completed"
+    artifact_path: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)

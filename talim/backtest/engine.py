@@ -20,6 +20,7 @@ import pandas as pd
 
 from talim.backtest.data_loader import load_dataframe, load_ohlcv
 from talim.backtest.metrics import Trade, compute_metrics
+from talim.backtest.sizing import BacktestSizingConfig, size_trade
 from talim.models.backtest import BacktestResult
 from talim.models.bar import OHLCVBar
 from talim.strategy.base import BaseStrategy
@@ -38,9 +39,16 @@ def _row_to_bar(row, instrument: str) -> OHLCVBar:
     )
 
 
-def _simulate(strategy: BaseStrategy, df: pd.DataFrame, instrument: str) -> list[Trade]:
+def _simulate(
+    strategy: BaseStrategy,
+    df: pd.DataFrame,
+    instrument: str,
+    sizing: BacktestSizingConfig | None = None,
+) -> list[Trade]:
     """Replay bars through a strategy and collect simulated trades."""
     strategy.reset()
+    sizing = sizing or BacktestSizingConfig()
+    available_capital = sizing.initial_capital
     trades: list[Trade] = []
 
     bars = [_row_to_bar(row, instrument) for row in df.itertuples(index=False)]
@@ -49,6 +57,16 @@ def _simulate(strategy: BaseStrategy, df: pd.DataFrame, instrument: str) -> list
     while i < n:
         sig = strategy.on_bar(bars[i])
         if sig is None:
+            i += 1
+            continue
+
+        qty = size_trade(
+            entry_price=sig.entry_price,
+            stop_price=sig.stop,
+            available_capital=available_capital,
+            config=sizing,
+        )
+        if qty <= 0:
             i += 1
             continue
 
@@ -75,7 +93,10 @@ def _simulate(strategy: BaseStrategy, df: pd.DataFrame, instrument: str) -> list
             i = n  # consume the rest
         else:
             i = j + 1
-        trades.append(Trade(side=sig.side, entry_price=sig.entry_price, exit_price=exit_price))
+        trade = Trade(side=sig.side, entry_price=sig.entry_price, exit_price=exit_price, qty=qty)
+        trades.append(trade)
+        if sizing.compound:
+            available_capital += trade.pnl
 
     return trades
 
@@ -88,6 +109,7 @@ def run_backtest(
     instrument: str = "ES",
     timeframe: str | None = None,
     df: pd.DataFrame | None = None,
+    sizing: BacktestSizingConfig | None = None,
 ) -> list[BacktestResult]:
     """Run a backtest for `strategy_name` across one or more parameter variants.
 
@@ -98,6 +120,7 @@ def run_backtest(
         data_dir: Directory containing parquet OHLCV files.
         instrument: Instrument symbol (used for the bar's `instrument` field).
         df: In-memory DataFrame to use instead of loading from disk (for tests).
+        sizing: Position sizing model. Defaults to fixed 1-unit trades.
 
     Returns:
         list[BacktestResult] sorted by sharpe_ratio descending.
@@ -127,8 +150,13 @@ def run_backtest(
         strategy = load_strategy(strategy_name)
         if variant:
             strategy.load_params(variant)
-        trades = _simulate(strategy, data, instrument)
+        trades = _simulate(strategy, data, instrument, sizing=sizing)
         m = compute_metrics(trades)
+        period_start = str(data["timestamp"].iloc[0]) if "timestamp" in data and len(data) else ""
+        period_end = str(data["timestamp"].iloc[-1]) if "timestamp" in data and len(data) else ""
+        basis = float(data["close"].iloc[0]) if "close" in data and len(data) else 0.0
+        capital_basis = (sizing.initial_capital if sizing is not None else 0.0) or basis
+        return_pct = float(m["net_pnl"] / capital_basis) if capital_basis else 0.0
         results.append(
             BacktestResult(
                 strategy_name=strategy_name,
@@ -139,6 +167,11 @@ def run_backtest(
                 total_trades=m["total_trades"],
                 param_variant=dict(variant),
                 matched_dates=list(matched_dates or []),
+                return_pct=return_pct,
+                sortino_ratio=m.get("sortino_ratio", 0.0),
+                profit_factor=m.get("profit_factor", 0.0),
+                period_start=period_start,
+                period_end=period_end,
             )
         )
 

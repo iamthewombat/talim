@@ -21,6 +21,7 @@ import pandas as pd
 from talim.app.state import TalimState
 from talim.connectors.pricefeed.base import BasePriceFeed
 from talim.models.bar import OHLCVBar
+from talim.regime.classifier import RegimeClassifier, classify_regime
 from talim.regime.fingerprint import compute_fingerprint, compute_atr
 from talim.strategy.base import BaseStrategy
 from talim.strategy.loader import load_strategy
@@ -39,6 +40,9 @@ class ScannerContext:
         self.price_feed: BasePriceFeed | None = None
         self.strategies: dict[str, BaseStrategy] = {}
         self.bar_window: int = 50  # bars kept per instrument
+        self.regime_classifier: RegimeClassifier | None = None
+        self.regime_change_threshold: float = 1.25
+        self.regime_persistence_bars: int = 2
         self._bar_history: dict[str, list[OHLCVBar]] = {}
 
     def set_price_feed(self, feed: BasePriceFeed) -> None:
@@ -63,6 +67,9 @@ class ScannerContext:
     def reset(self) -> None:
         self.price_feed = None
         self.strategies.clear()
+        self.regime_classifier = None
+        self.regime_change_threshold = 1.25
+        self.regime_persistence_bars = 2
         self._bar_history.clear()
 
 
@@ -74,10 +81,16 @@ def configure_scanner(
     price_feed: BasePriceFeed,
     strategies: list[BaseStrategy] | None = None,
     bar_window: int = 50,
+    regime_classifier: RegimeClassifier | None = None,
+    regime_change_threshold: float = 1.25,
+    regime_persistence_bars: int = 2,
 ) -> ScannerContext:
     """Configure the scanner's injected dependencies."""
     _context.reset()
     _context.bar_window = bar_window
+    _context.regime_classifier = regime_classifier
+    _context.regime_change_threshold = regime_change_threshold
+    _context.regime_persistence_bars = max(1, regime_persistence_bars)
     _context.set_price_feed(price_feed)
     price_feed.on_bar(_context.record_bar)
 
@@ -96,6 +109,83 @@ def _bars_to_dataframe(bars: list[OHLCVBar]) -> pd.DataFrame:
         "close": b.close,
         "volume": b.volume,
     } for b in bars])
+
+
+def _normalise_fingerprint(fingerprint: np.ndarray) -> np.ndarray:
+    """Scale mixed-unit fingerprint features before distance comparison."""
+    fp = np.asarray(fingerprint, dtype=np.float64)
+    return np.array(
+        [
+            fp[0] / 25.0,
+            (fp[1] - 1.0) / 0.35,
+            fp[2],
+            fp[3] / 0.01,
+            (fp[4] - 1.0) / 0.50,
+            fp[5] / 0.02,
+        ],
+        dtype=np.float64,
+    )
+
+
+def _classify_regime_label(fingerprint: np.ndarray) -> str:
+    """Classify a fingerprint into a labelled market regime."""
+    clf = _context.regime_classifier
+    if clf is not None and clf.is_fitted:
+        return classify_regime(fingerprint, clf)
+
+    adx, atr_ratio, trend_slope, realised_vol, _volume_ratio, momentum = fingerprint
+    trend_strength = abs(trend_slope) + abs(momentum / 0.02)
+
+    if atr_ratio >= 1.35 or realised_vol >= 0.012:
+        return "high_vol"
+    if adx >= 25.0 and trend_strength >= 0.50:
+        return "momentum"
+    if adx <= 20.0 and atr_ratio <= 1.15 and abs(momentum) >= 0.004:
+        return "mean_reversion"
+    return "ranging"
+
+
+def _detect_regime_transition(state: TalimState, fingerprint: np.ndarray) -> dict:
+    """Classify current regime and require persistence before switching."""
+    label = _classify_regime_label(fingerprint)
+    prev_label = state.get("regime")
+    prev_fp = state.get("regime_fingerprint")
+
+    update: dict = {
+        "regime_changed": False,
+        "regime_candidate": None,
+        "regime_candidate_count": 0,
+    }
+
+    if not prev_label:
+        update["regime"] = label
+        return update
+
+    update["regime"] = prev_label
+    if label == prev_label:
+        return update
+
+    distance_ok = True
+    if prev_fp is not None and len(prev_fp) == 6:
+        prev_arr = np.array(prev_fp, dtype=np.float64)
+        dist = float(np.linalg.norm(_normalise_fingerprint(fingerprint) - _normalise_fingerprint(prev_arr)))
+        distance_ok = dist >= _context.regime_change_threshold
+
+    if not distance_ok:
+        return update
+
+    prev_candidate = state.get("regime_candidate")
+    prev_count = int(state.get("regime_candidate_count") or 0)
+    candidate_count = prev_count + 1 if prev_candidate == label else 1
+
+    if candidate_count >= _context.regime_persistence_bars:
+        update["regime"] = label
+        update["regime_changed"] = True
+        return update
+
+    update["regime_candidate"] = label
+    update["regime_candidate_count"] = candidate_count
+    return update
 
 
 # ---------------------------------------------------------------------------
@@ -155,14 +245,9 @@ def signal_scanner(state: TalimState) -> TalimState:
     update["regime_fingerprint"] = fingerprint.tolist()
     update["last_scan_time"] = datetime.now(tz=timezone.utc).isoformat()
 
-    # Detect regime change — compare fingerprint to previous
-    prev_fp = state.get("regime_fingerprint")
-    if prev_fp is not None and len(prev_fp) == 6:
-        prev_arr = np.array(prev_fp, dtype=np.float64)
-        dist = float(np.linalg.norm(fingerprint - prev_arr))
-        update["regime_changed"] = dist > 1.0  # threshold
-    else:
-        update["regime_changed"] = False
+    # Label the regime and require a persistent, normalised change before
+    # triggering strategy_update.
+    update.update(_detect_regime_transition(state, fingerprint))
 
     # Check active strategies for signals. Distinguish "key missing" (use all
     # loaded) from "key set to []" (operator disabled everything — WP-70).
@@ -190,7 +275,7 @@ def signal_scanner(state: TalimState) -> TalimState:
                 last_signal = sig
         if last_signal is not None:
             # Attach regime context now that we have the fingerprint
-            regime_label = state.get("regime", "")
+            regime_label = update.get("regime") or state.get("regime", "")
             pending_signal = last_signal
             if not pending_signal.regime_context and regime_label:
                 # Signal is frozen dataclass — create a new one with updated context

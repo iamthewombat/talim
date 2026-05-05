@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import date
+import sqlite3
 
 import numpy as np
 import pandas as pd
@@ -81,8 +82,79 @@ class TestBacktestHistoryStore:
         assert row["triggered_by"] == "cli"
         assert row["notes"] == "unit-test"
         assert row["net_pnl"] == pytest.approx(123.45)
+        assert row["return_pct"] == pytest.approx(0.0)
+        assert row["sortino_ratio"] == pytest.approx(0.0)
+        assert row["profit_factor"] == pytest.approx(0.0)
+        assert row["status"] == "completed"
+        assert row["artifact_path"] == ""
         assert row["param_variant"] == {"ema_fast_period": 8}
         assert row["matched_dates"] == ["2025-06-01"]
+
+    def test_record_extended_summary_fields(self, tmp_path):
+        h = BacktestHistory(tmp_path / "h.db")
+        result = BacktestResult(
+            strategy_name="momentum-US500",
+            net_pnl=50.0,
+            sharpe_ratio=1.2,
+            max_drawdown=-5.0,
+            win_rate=0.6,
+            total_trades=10,
+            return_pct=0.01,
+            sortino_ratio=1.8,
+            profit_factor=1.6,
+            period_start="2025-01-01T00:00:00",
+            period_end="2025-02-01T00:00:00",
+            artifact_path="artifacts/run-1.json",
+        )
+        run_id = h.record_run(result=result, status="partial")
+
+        row = h.get_run(run_id)
+
+        assert row["return_pct"] == pytest.approx(0.01)
+        assert row["sortino_ratio"] == pytest.approx(1.8)
+        assert row["profit_factor"] == pytest.approx(1.6)
+        assert row["period_start"] == "2025-01-01T00:00:00"
+        assert row["period_end"] == "2025-02-01T00:00:00"
+        assert row["status"] == "partial"
+        assert row["artifact_path"] == "artifacts/run-1.json"
+
+    def test_migrates_legacy_schema_without_deleting_rows(self, tmp_path):
+        db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(db)
+        conn.execute("""
+            CREATE TABLE backtest_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                instrument TEXT NOT NULL DEFAULT '',
+                timeframe TEXT NOT NULL DEFAULT '',
+                engine TEXT NOT NULL DEFAULT 'on_bar',
+                param_variant TEXT NOT NULL DEFAULT '{}',
+                matched_dates TEXT NOT NULL DEFAULT '[]',
+                net_pnl REAL NOT NULL DEFAULT 0.0,
+                sharpe_ratio REAL NOT NULL DEFAULT 0.0,
+                max_drawdown REAL NOT NULL DEFAULT 0.0,
+                win_rate REAL NOT NULL DEFAULT 0.0,
+                total_trades INTEGER NOT NULL DEFAULT 0,
+                triggered_by TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        conn.execute(
+            "INSERT INTO backtest_runs (created_at, strategy, net_pnl, sharpe_ratio, max_drawdown, win_rate, total_trades) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("2025-01-01T00:00:00", "legacy", 1.0, 0.2, -1.0, 0.5, 2),
+        )
+        conn.commit()
+        conn.close()
+
+        h = BacktestHistory(db)
+        rows = h.list_runs()
+
+        assert len(rows) == 1
+        assert rows[0]["strategy"] == "legacy"
+        assert rows[0]["return_pct"] == pytest.approx(0.0)
+        assert rows[0]["status"] == "completed"
+        assert rows[0]["artifact_path"] == ""
 
     def test_list_runs_newest_first(self, tmp_path):
         h = BacktestHistory(tmp_path / "h.db")

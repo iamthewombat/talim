@@ -326,6 +326,8 @@ class Runtime:
         strategy: str | None = None,
         instrument: str | None = None,
         triggered_by: str | None = None,
+        status: str | None = None,
+        timeframe: str | None = None,
         since: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -335,9 +337,31 @@ class Runtime:
             strategy=strategy,
             instrument=instrument,
             triggered_by=triggered_by,
+            status=status,
+            timeframe=timeframe,
             since=since,
             limit=limit,
             offset=offset,
+        )
+
+    def operator_backtest_outcomes(
+        self,
+        *,
+        strategy: str | None = None,
+        instrument: str | None = None,
+        status: str | None = None,
+        timeframe: str | None = None,
+        since: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return grouped strategy outcomes built from backtest summary rows."""
+        return self.backtest_history.list_outcomes(
+            strategy=strategy,
+            instrument=instrument,
+            status=status,
+            timeframe=timeframe,
+            since=since,
+            limit=limit,
         )
 
     def operator_backtest(self, run_id: int) -> dict[str, Any]:

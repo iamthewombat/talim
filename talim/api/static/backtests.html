@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Talim Backtests</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="backtests-page">
+<header>
+  <h1>Talim Backtests</h1>
+  <div class="controls">
+    <a class="nav-link" href="/talim/dashboard/">Operator</a>
+    <button id="refresh-btn" type="button">Refresh</button>
+    <span class="sep">·</span>
+    <span id="auth-state" class="auth-locked">Checking auth…</span>
+    <button id="signin-btn" type="button">Sign in</button>
+    <span class="sep">·</span>
+    <span id="last-refresh" class="muted">never</span>
+  </div>
+</header>
+
+<nav class="mobile-tabs" aria-label="Backtest sections">
+  <button type="button" class="tab active" data-view="runs">Outcomes</button>
+  <button type="button" class="tab" data-view="graph">Graph</button>
+  <button type="button" class="tab" data-view="detail">Detail</button>
+</nav>
+
+<main class="backtests-main">
+  <section id="view-runs" class="bt-view active">
+    <div class="panel sticky-filter">
+      <div class="panel-title-row">
+        <h2>Strategy outcomes</h2>
+        <button id="toggle-filters" type="button" class="compact">Filters</button>
+      </div>
+      <form id="backtests-filter" class="filter-row collapsible open">
+        <label>strategy <select name="strategy"><option value="">All strategies</option></select></label>
+        <label>instrument <select name="instrument"><option value="">All instruments</option></select></label>
+        <label>bars <select name="timeframe"><option value="">All bars</option></select></label>
+        <label>sort <select name="sort">
+          <option value="sharpe_desc">Sharpe high → low</option>
+          <option value="win_rate_desc">Win rate high → low</option>
+          <option value="net_pnl_desc">Total P&amp;L high → low</option>
+          <option value="avg_net_pnl_desc">Avg P&amp;L high → low</option>
+          <option value="max_drawdown_desc">Drawdown best → worst</option>
+          <option value="total_trades_desc">Trades high → low</option>
+          <option value="run_count_desc">Runs high → low</option>
+        </select></label>
+        <label>limit <input name="limit" type="number" value="100" min="1" max="500"></label>
+        <button type="submit">Apply</button>
+      </form>
+    </div>
+    <div id="runs-body" class="runs-list">Loading…</div>
+  </section>
+
+  <section id="view-graph" class="bt-view">
+    <div class="panel">
+      <div class="panel-title-row">
+        <h2>Graph</h2>
+        <select id="graph-metric" aria-label="Graph metric">
+          <option value="net_pnl">Net P&amp;L</option>
+          <option value="return_pct">Return %</option>
+          <option value="sharpe_ratio">Sharpe</option>
+          <option value="sortino_ratio">Sortino</option>
+          <option value="max_drawdown">Max drawdown</option>
+          <option value="win_rate">Win rate</option>
+          <option value="profit_factor">Profit factor</option>
+          <option value="total_trades">Trades</option>
+        </select>
+      </div>
+      <div id="graph-summary" class="metric-strip"></div>
+      <div class="chart-wrap"><canvas id="runs-chart" width="900" height="420"></canvas></div>
+      <div id="graph-empty" class="muted" hidden>No strategy outcomes to graph yet.</div>
+    </div>
+  </section>
+
+  <section id="view-detail" class="bt-view">
+    <div id="detail-body" class="panel detail-panel">
+      <h2>Detail</h2>
+      <p class="muted">Select a strategy outcome or tap a bar in Graph.</p>
+    </div>
+  </section>
+</main>
+
+<script src="backtests.js"></script>
+</body>
+</html>

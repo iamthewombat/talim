@@ -21,17 +21,20 @@ class Trade:
 
 
 def compute_metrics(trades: list[Trade]) -> dict:
-    """Compute net_pnl, sharpe, max_drawdown, win_rate, total_trades.
+    """Compute summary performance metrics for a backtest.
 
-    Sharpe is computed on per-trade returns (not annualised) — adequate for
-    PoC ranking. Max drawdown is the worst trough on the cumulative PnL curve.
+    Sharpe/Sortino are computed on per-trade returns (not annualised) — adequate
+    for PoC ranking. Max drawdown is the worst trough on the cumulative PnL
+    curve. Profit factor is gross wins divided by gross losses.
     """
     if not trades:
         return {
             "net_pnl": 0.0,
             "sharpe_ratio": 0.0,
+            "sortino_ratio": 0.0,
             "max_drawdown": 0.0,
             "win_rate": 0.0,
+            "profit_factor": 0.0,
             "total_trades": 0,
         }
 
@@ -41,6 +44,9 @@ def compute_metrics(trades: list[Trade]) -> dict:
     mean = float(pnls.mean())
     std = float(pnls.std(ddof=1)) if len(pnls) > 1 else 0.0
     sharpe = float(mean / std) if std > 0 else 0.0
+    downside = pnls[pnls < 0]
+    downside_std = float(downside.std(ddof=1)) if len(downside) > 1 else 0.0
+    sortino = float(mean / downside_std) if downside_std > 0 else 0.0
 
     equity = np.cumsum(pnls)
     peak = np.maximum.accumulate(equity)
@@ -49,11 +55,16 @@ def compute_metrics(trades: list[Trade]) -> dict:
 
     wins = int((pnls > 0).sum())
     win_rate = float(wins / len(pnls))
+    gross_wins = float(pnls[pnls > 0].sum())
+    gross_losses = abs(float(pnls[pnls < 0].sum()))
+    profit_factor = float(gross_wins / gross_losses) if gross_losses > 0 else (gross_wins if gross_wins > 0 else 0.0)
 
     return {
         "net_pnl": net,
         "sharpe_ratio": sharpe,
+        "sortino_ratio": sortino,
         "max_drawdown": max_dd,
         "win_rate": win_rate,
+        "profit_factor": profit_factor,
         "total_trades": len(trades),
     }

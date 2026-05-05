@@ -10,6 +10,7 @@ from talim.app.nodes.backtest_run import backtest_run
 from talim.backtest.engine import run_backtest
 from talim.backtest.metrics import Trade, compute_metrics
 from talim.backtest.data_loader import load_ohlcv
+from talim.backtest.sizing import BacktestSizingConfig, size_trade
 from talim.models.backtest import BacktestRequest, BacktestResult
 
 
@@ -67,6 +68,38 @@ class TestMetrics:
         trades = [Trade("long", 100, 110), Trade("long", 100, 80), Trade("long", 100, 105)]
         m = compute_metrics(trades)
         assert m["max_drawdown"] == pytest.approx(-20.0)
+
+
+class TestSizing:
+    def test_risk_pct_sizes_from_entry_to_stop_risk(self):
+        cfg = BacktestSizingConfig(
+            initial_capital=10_000.0,
+            mode="risk_pct",
+            risk_per_trade_pct=0.02,
+        )
+        qty = size_trade(
+            entry_price=100.0,
+            stop_price=95.0,
+            available_capital=10_000.0,
+            config=cfg,
+        )
+        assert qty == pytest.approx(40.0)  # $200 risk budget / $5 unit risk
+
+    def test_sizing_respects_position_and_exposure_caps(self):
+        cfg = BacktestSizingConfig(
+            initial_capital=10_000.0,
+            mode="risk_pct",
+            risk_per_trade_pct=0.10,
+            max_position_qty=25.0,
+            max_total_exposure=1_000.0,
+        )
+        qty = size_trade(
+            entry_price=100.0,
+            stop_price=90.0,
+            available_capital=10_000.0,
+            config=cfg,
+        )
+        assert qty == pytest.approx(10.0)  # exposure cap wins: $1,000 / $100
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +169,24 @@ class TestEngine:
         )
         assert len(results) == 1
         assert results[0].strategy_name == "momentum-AU200"
+
+    def test_risk_pct_sizing_changes_backtest_scale_and_return_basis(self):
+        df = _sine_df()
+        fixed = run_backtest("momentum-US500", param_variants=[{}], df=df)[0]
+        sized = run_backtest(
+            "momentum-US500",
+            param_variants=[{}],
+            df=df,
+            sizing=BacktestSizingConfig(
+                initial_capital=10_000.0,
+                mode="risk_pct",
+                risk_per_trade_pct=0.01,
+                max_position_qty=10.0,
+            ),
+        )[0]
+        assert sized.total_trades == fixed.total_trades
+        assert sized.net_pnl != pytest.approx(fixed.net_pnl)
+        assert sized.return_pct == pytest.approx(sized.net_pnl / 10_000.0)
 
 
 # ---------------------------------------------------------------------------

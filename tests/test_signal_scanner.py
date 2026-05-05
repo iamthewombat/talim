@@ -10,6 +10,9 @@ from talim.app.nodes.signal_scanner import (
     configure_scanner,
     signal_scanner,
     _context,
+    _classify_regime_label,
+    _detect_regime_transition,
+    _normalise_fingerprint,
 )
 from talim.connectors.pricefeed.mock import MockPriceFeed
 from talim.connectors.pricefeed.base import BasePriceFeed
@@ -86,6 +89,38 @@ class _PollingFeed(BasePriceFeed):
     def poll_once(self, instrument: str) -> OHLCVBar | None:
         self.poll_calls += 1
         return None
+
+
+class TestRegimeTransitionDetection:
+    def test_normalised_distance_does_not_let_adx_dominate(self):
+        a = np.array([20.0, 1.0, 0.0, 0.002, 1.0, 0.0])
+        b = np.array([21.0, 1.0, 0.0, 0.002, 1.0, 0.0])
+        assert np.linalg.norm(_normalise_fingerprint(b) - _normalise_fingerprint(a)) < 0.1
+
+    def test_labels_fallback_regime_without_fitted_classifier(self):
+        _context.reset()
+        assert _classify_regime_label(np.array([30.0, 1.05, 0.7, 0.004, 1.0, 0.015])) == "momentum"
+        assert _classify_regime_label(np.array([12.0, 1.50, 0.1, 0.004, 1.0, 0.001])) == "high_vol"
+
+    def test_regime_switch_requires_persistence(self):
+        _context.reset()
+        fp = np.array([35.0, 1.05, 0.8, 0.004, 1.0, 0.020])
+        prev = [10.0, 1.0, 0.0, 0.001, 1.0, 0.0]
+
+        first = _detect_regime_transition({"regime": "ranging", "regime_fingerprint": prev}, fp)
+        assert first["regime"] == "ranging"
+        assert first["regime_changed"] is False
+        assert first["regime_candidate"] == "momentum"
+        assert first["regime_candidate_count"] == 1
+
+        second = _detect_regime_transition({
+            "regime": "ranging",
+            "regime_fingerprint": prev,
+            "regime_candidate": "momentum",
+            "regime_candidate_count": 1,
+        }, fp)
+        assert second["regime"] == "momentum"
+        assert second["regime_changed"] is True
 
 
 # ---------------------------------------------------------------------------
