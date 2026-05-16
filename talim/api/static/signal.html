@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Talim Signal</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="signal-page">
+<header>
+  <h1>Talim Signal</h1>
+  <div class="controls">
+    <a class="nav-link" href="/talim/dashboard/">Operator</a>
+    <button id="refresh-btn" type="button">Refresh</button>
+    <span class="sep">·</span>
+    <span id="auth-state" class="auth-locked">Checking auth…</span>
+    <button id="signin-btn" type="button">Sign in</button>
+    <button id="unlock-btn" type="button" hidden>Unlock writes</button>
+    <button id="lock-btn" type="button" hidden>Lock writes</button>
+    <span class="sep">·</span>
+    <span id="last-refresh" class="muted">never</span>
+  </div>
+</header>
+
+<main class="signal-main">
+  <section class="signal-hero panel">
+    <div class="panel-title-row">
+      <h2>HITL Signal</h2>
+      <span id="signal-pill" class="pill">—</span>
+    </div>
+    <div id="signal-summary" class="signal-summary">Loading…</div>
+    <div id="signal-actions" class="signal-actions"></div>
+  </section>
+
+  <section class="panel signal-chart-panel">
+    <div class="panel-title-row">
+      <h2>Price chart</h2>
+      <button id="fit-chart-btn" type="button">Fit</button>
+    </div>
+    <div id="chart-meta" class="muted">Loading chart…</div>
+    <div id="signal-chart" class="signal-chart" aria-label="Signal price chart"></div>
+    <div id="chart-warnings" class="panel-body"></div>
+  </section>
+
+  <section class="panel decision-context-panel">
+    <h2>Decision context</h2>
+    <div id="decision-context-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section class="panel">
+    <h2>Live validation</h2>
+    <div id="validation-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section class="panel">
+    <h2>Original signal</h2>
+    <div id="original-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section class="panel">
+    <h2>Context</h2>
+    <div id="context-body" class="panel-body">Loading…</div>
+  </section>
+</main>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="signal.js"></script>
+</body>
+</html>

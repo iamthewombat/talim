@@ -8,9 +8,11 @@ strategies, and wires the module-level node contexts used by the graph.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from pathlib import Path
+import re
 from typing import Any
 
 from talim.app.checkpointer import create_checkpointer
@@ -19,7 +21,9 @@ from talim.app.entrypoints import cron_trigger as invoke_cron_trigger
 from talim.app.execute_context import configure_execute
 from talim.app.graph import build_graph
 from talim.app.nodes.reconcile import format_repair_notification, reconcile_positions
+from talim.app.nodes.risk_check import risk_check as run_risk_check
 from talim.app.nodes.risk_check import configure_risk_rules
+from talim.app.nodes.signal_scanner import _context as scanner_context
 from talim.app.nodes.signal_scanner import configure_scanner
 from talim.app.resume import resume_graph
 from talim.app.state import TalimState
@@ -31,9 +35,49 @@ from talim.risk.cfd import select_account_balance
 from talim.risk.config import RiskConfigError, load_validated_config
 from talim.risk.pnl_tracker import PnLSnapshot, PnLTracker
 from talim.risk.rules import RiskRules
+from talim.strategy.indicators import ema
 from talim.strategy.loader import load_strategy
 
 logger = logging.getLogger("talim.app.runtime")
+
+_TIMEFRAME_RE = re.compile(r"^(?P<count>\d+)(?P<unit>[mhd])$")
+
+
+def _parse_timeframe_delta(timeframe: str) -> timedelta:
+    match = _TIMEFRAME_RE.match(timeframe.strip().lower())
+    if not match:
+        return timedelta(minutes=5)
+    count = int(match.group("count"))
+    unit = match.group("unit")
+    if unit == "m":
+        return timedelta(minutes=count)
+    if unit == "h":
+        return timedelta(hours=count)
+    return timedelta(days=count)
+
+
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _bar_time_utc(bar: Any) -> datetime:
+    ts = getattr(bar, "timestamp")
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
 
 
 class RuntimeConfigError(ValueError):
@@ -201,17 +245,160 @@ class Runtime:
             checkpointer=self.checkpointer,
         )
 
-    def resume(self, *, thread_id: str, approved: bool) -> TalimState:
-        return resume_graph(
+    def resume(
+        self,
+        *,
+        thread_id: str,
+        approved: bool,
+        signal_id: str | None = None,
+    ) -> TalimState:
+        """Resume a pending HITL signal with approval-time safety gates.
+
+        Rejections still clear the pending signal immediately. Approvals first
+        refresh broker state, run strategy-specific validation, and rerun risk
+        checks before the graph is allowed to continue to execute.
+        """
+        snapshot = self.snapshot(thread_id=thread_id)
+        values = dict(snapshot.values) if snapshot is not None else {}
+        pending = values.get("pending_signal")
+        pending_json = _jsonable(pending) if pending is not None else None
+        current_signal_id = self.episodic.signal_id_for(pending_json) if pending_json else None
+        if signal_id and signal_id != current_signal_id:
+            message = (
+                f"Decision blocked: requested signal {signal_id} is not the "
+                f"current pending signal {current_signal_id or 'none'}"
+            )
+            return {
+                "thread_id": thread_id,
+                "pending_signal": pending,
+                "signal_approved": False,
+                "last_action": message,
+                "pending_notification": message,
+            }  # type: ignore[return-value]
+        signal_id = current_signal_id
+
+        if not approved:
+            if signal_id:
+                self.episodic.update_signal_status(
+                    signal_id, status="rejected", actor="operator"
+                )
+            return resume_graph(
+                thread_id=thread_id,
+                approved=False,
+                checkpointer=self.checkpointer,
+            )
+
+        if pending is None or pending_json is None:
+            return {
+                "thread_id": thread_id,
+                "pending_signal": None,
+                "signal_approved": False,
+                "last_action": "approval blocked: no pending signal",
+                "pending_notification": "Approval blocked: no pending signal",
+            }  # type: ignore[return-value]
+
+        positions = self._safe_positions()
+        pnl = self._safe_pnl_snapshot()
+        graph = build_graph(checkpointer=self.checkpointer)
+        config = {"configurable": {"thread_id": thread_id}}
+
+        validation = self.validate_signal(signal=pending_json, thread_id=thread_id)
+        if not validation.get("approval_allowed"):
+            status = "expired" if validation.get("status") == "stale" else "invalid"
+            reason = validation.get("reason") or "validation blocked approval"
+            if signal_id:
+                self.episodic.update_signal_status(
+                    signal_id,
+                    status=status,
+                    actor="operator",
+                    validation_status=validation.get("status"),
+                    validation_reason=reason,
+                )
+            message = f"Approval blocked for {signal_id or 'pending signal'}: {reason}"
+            graph.update_state(config, {
+                "pending_notification": message,
+                "last_action": message,
+            })
+            return resume_graph(
+                thread_id=thread_id,
+                approved=False,
+                checkpointer=self.checkpointer,
+            )
+
+        risk_state = dict(values)
+        risk_state.update({
+            "active_positions": positions,
+            "pending_signal": pending,
+        })
+        if pnl is not None:
+            risk_state.update({
+                "account_balance": pnl.account_balance,
+                "open_pnl": pnl.open_pnl,
+                "daily_pnl": pnl.daily_pnl,
+            })
+        risk_update = run_risk_check(risk_state)
+        if risk_update.get("pending_signal") is None and risk_update.get("signal_approved") is False:
+            reason = risk_update.get("pending_notification") or "risk check blocked approval"
+            if signal_id:
+                self.episodic.update_signal_status(
+                    signal_id,
+                    status="invalid",
+                    actor="operator",
+                    validation_status="risk_changed",
+                    validation_reason=reason,
+                )
+            graph.update_state(config, {
+                **risk_update,
+                "last_action": reason,
+            })
+            return resume_graph(
+                thread_id=thread_id,
+                approved=False,
+                checkpointer=self.checkpointer,
+            )
+
+        if signal_id:
+            self.episodic.update_signal_status(
+                signal_id,
+                status="approved",
+                actor="operator",
+                validation_status=validation.get("status"),
+                validation_reason=validation.get("reason"),
+            )
+        graph.update_state(config, {
+            "active_positions": positions,
+            **({
+                "account_balance": pnl.account_balance,
+                "open_pnl": pnl.open_pnl,
+                "daily_pnl": pnl.daily_pnl,
+            } if pnl is not None else {}),
+        })
+        final = resume_graph(
             thread_id=thread_id,
-            approved=approved,
+            approved=True,
             checkpointer=self.checkpointer,
         )
+        if signal_id and (final or {}).get("pending_signal") is None:
+            last_action = str((final or {}).get("last_action") or "")
+            if "executed" in last_action:
+                self.episodic.update_signal_status(
+                    signal_id, status="executed", actor="operator"
+                )
+        return final
 
     def snapshot(self, *, thread_id: str) -> Any:
         """Return the LangGraph state snapshot for a thread, or None."""
         graph = build_graph(checkpointer=self.checkpointer)
         return graph.get_state({"configurable": {"thread_id": thread_id}})
+
+    def _dashboard_url(self, signal_id: str | None = None) -> str | None:
+        base = os.environ.get("TALIM_PUBLIC_BASE_URL") or os.environ.get("TALIM_BASE_URL")
+        if not base:
+            return None
+        url = base.rstrip("/") + "/dashboard/"
+        if signal_id:
+            url += f"signal.html?signal={signal_id}"
+        return url
 
     def pending_signal_status(self, *, thread_id: str) -> dict[str, Any]:
         """Return operator-facing HITL state for a graph thread."""
@@ -220,15 +407,323 @@ class Runtime:
         next_nodes = list(getattr(snapshot, "next", ()) or []) if snapshot is not None else []
         exists = bool(values or next_nodes)
         pending = values.get("pending_signal")
+        pending_json = _jsonable(pending) if pending is not None else None
+        signal_id = None
+        dashboard_url = self._dashboard_url()
+        if pending_json is not None:
+            context = {
+                "atr_current": values.get("atr_current"),
+                "atr_ratio": values.get("atr_ratio"),
+                "regime": values.get("regime"),
+                "last_scan_time": values.get("last_scan_time"),
+                "pending_notification": values.get("pending_notification"),
+            }
+            signal_id = self.episodic.record_signal(
+                signal=pending_json,
+                thread_id=thread_id,
+                status="pending",
+                context=context,
+                dashboard_url=self._dashboard_url(self.episodic.signal_id_for(pending_json)),
+            )
+            dashboard_url = self._dashboard_url(signal_id)
+            pending_json["signal_id"] = signal_id
+            try:
+                validation = self.validate_signal(signal=pending_json, thread_id=thread_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("runtime: pending signal validation failed", exc_info=True)
+                validation = {
+                    "status": "data_unavailable",
+                    "approval_allowed": False,
+                    "reason": f"validation failed: {e}",
+                }
+            pending_json["validation"] = validation
+        else:
+            validation = None
         return {
             "thread_id": thread_id,
             "exists": exists,
             "paused": bool(next_nodes),
             "next_nodes": next_nodes,
-            "pending_signal": _jsonable(pending) if pending is not None else None,
+            "signal_id": signal_id,
+            "dashboard_url": dashboard_url,
+            "validation": validation,
+            "pending_signal": pending_json,
             "pending_notification": values.get("pending_notification"),
             "signal_approved": values.get("signal_approved"),
             "last_action": values.get("last_action"),
+        }
+
+
+    def validate_signal(
+        self,
+        *,
+        signal: Any,
+        thread_id: str = "cron-main",
+    ) -> dict[str, Any]:
+        """Run strategy-specific validation for a pending signal."""
+        from talim.models.signal import Signal
+
+        if isinstance(signal, dict):
+            payload = {key: value for key, value in signal.items() if key in Signal.__dataclass_fields__}
+            sig = Signal.from_dict(payload)
+        else:
+            sig = signal
+        bars = list(scanner_context.get_history(sig.instrument))
+        if len(bars) < max(20, self.config.bar_window):
+            try:
+                self.price_feed.prime_history(sig.instrument, min_bars=max(20, self.config.bar_window))
+                self.price_feed.poll_once(sig.instrument)
+                bars = list(scanner_context.get_history(sig.instrument))
+            except Exception:  # noqa: BLE001
+                logger.warning("runtime: failed to refresh bars for signal validation", exc_info=True)
+        strat = next((s for s in self.strategies if s.name == sig.strategy), None)
+        if strat is None:
+            strat = load_strategy(sig.strategy)
+        atr = None
+        snapshot = self.snapshot(thread_id=thread_id)
+        if snapshot is not None:
+            values = dict(snapshot.values)
+            atr = values.get("atr_current")
+        result = strat.validate_signal(sig, bars, atr=atr if isinstance(atr, (int, float)) else None)
+        signal_id = self.episodic.signal_id_for(_jsonable(sig))
+        self.episodic.update_signal_status(
+            signal_id,
+            status="pending",
+            validation_status=result.status,
+            validation_reason=result.reason,
+        )
+        return result.to_dict()
+
+    def operator_signal(self, *, signal_id: str) -> dict[str, Any] | None:
+        """Return one durable signal lifecycle row by public signal id."""
+        return self.episodic.get_signal(signal_id)
+
+    def operator_signal_chart(
+        self,
+        *,
+        signal_id: str,
+        before: int = 50,
+        after: int = 20,
+    ) -> dict[str, Any] | None:
+        """Return candles and EMA overlays around a durable signal."""
+        signal = self.episodic.get_signal(signal_id)
+        if signal is None:
+            return None
+
+        before = min(max(int(before), 1), 500)
+        after = min(max(int(after), 0), 500)
+        instrument = str(signal.get("instrument") or "")
+        timeframe = self.config.pricefeed_timeframe
+        signal_ts = _parse_utc_datetime(
+            signal.get("source_bar_timestamp") or signal.get("created_at")
+        )
+        warnings: list[str] = []
+        if signal_ts is None:
+            return self._empty_signal_chart(
+                signal=signal,
+                before=before,
+                after=after,
+                timeframe=timeframe,
+                source="none",
+                status="data_unavailable",
+                warnings=["signal has no parseable source timestamp"],
+            )
+
+        bars, source, source_warnings = self._chart_bars(
+            instrument=instrument,
+            signal_ts=signal_ts,
+            before=before,
+            after=after,
+            timeframe=timeframe,
+        )
+        warnings.extend(source_warnings)
+        if not bars:
+            return self._empty_signal_chart(
+                signal=signal,
+                before=before,
+                after=after,
+                timeframe=timeframe,
+                source=source,
+                status="data_unavailable",
+                warnings=warnings or ["no bars available around signal"],
+            )
+
+        index = self._signal_bar_index(bars, signal_ts)
+        if index is None:
+            warnings.append("source bar timestamp was not present in returned bars")
+            index = min(range(len(bars)), key=lambda i: abs((_bar_time_utc(bars[i]) - signal_ts).total_seconds()))
+
+        start = max(0, index - before)
+        end = min(len(bars), index + after + 1)
+        selected = bars[start:end]
+        closes = [float(bar.close) for bar in selected]
+        ema_fast = ema(closes, 8)
+        ema_slow = ema(closes, 21)
+        candle_payload = [self._chart_bar_payload(bar) for bar in selected]
+        fast_payload = [
+            {"time": candle_payload[i]["time"], "value": round(value, 6)}
+            for i, value in enumerate(ema_fast)
+        ]
+        slow_payload = [
+            {"time": candle_payload[i]["time"], "value": round(value, 6)}
+            for i, value in enumerate(ema_slow)
+        ]
+        visible_signal_index = index - start
+        status = "ok"
+        if visible_signal_index < 20:
+            status = "partial"
+            warnings.append(
+                f"only {visible_signal_index} pre-signal bars available; requested at least 20"
+            )
+
+        return {
+            "signal_id": signal.get("signal_id"),
+            "status": status,
+            "source": source,
+            "timeframe": timeframe,
+            "requested": {"before": before, "after": after},
+            "signal": {
+                "timestamp": signal_ts.isoformat(),
+                "visible_index": visible_signal_index,
+                "instrument": instrument,
+                "strategy": signal.get("strategy"),
+                "side": signal.get("side"),
+                "entry_price": signal.get("entry_price"),
+                "stop": signal.get("stop"),
+                "target": signal.get("target"),
+                "rationale": signal.get("rationale"),
+                "regime": signal.get("regime"),
+                "latest_validation_status": signal.get("latest_validation_status"),
+                "latest_validation_reason": signal.get("latest_validation_reason"),
+            },
+            "candles": candle_payload,
+            "indicators": {
+                "ema_fast": {"period": 8, "values": fast_payload},
+                "ema_slow": {"period": 21, "values": slow_payload},
+            },
+            "levels": {
+                "entry": signal.get("entry_price"),
+                "stop": signal.get("stop"),
+                "target": signal.get("target"),
+            },
+            "warnings": warnings,
+        }
+
+    def _empty_signal_chart(
+        self,
+        *,
+        signal: dict[str, Any],
+        before: int,
+        after: int,
+        timeframe: str,
+        source: str,
+        status: str,
+        warnings: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "signal_id": signal.get("signal_id"),
+            "status": status,
+            "source": source,
+            "timeframe": timeframe,
+            "requested": {"before": before, "after": after},
+            "signal": {
+                "timestamp": signal.get("source_bar_timestamp") or signal.get("created_at"),
+                "instrument": signal.get("instrument"),
+                "strategy": signal.get("strategy"),
+                "side": signal.get("side"),
+                "entry_price": signal.get("entry_price"),
+                "stop": signal.get("stop"),
+                "target": signal.get("target"),
+                "rationale": signal.get("rationale"),
+                "regime": signal.get("regime"),
+                "latest_validation_status": signal.get("latest_validation_status"),
+                "latest_validation_reason": signal.get("latest_validation_reason"),
+            },
+            "candles": [],
+            "indicators": {
+                "ema_fast": {"period": 8, "values": []},
+                "ema_slow": {"period": 21, "values": []},
+            },
+            "levels": {
+                "entry": signal.get("entry_price"),
+                "stop": signal.get("stop"),
+                "target": signal.get("target"),
+            },
+            "warnings": warnings,
+        }
+
+    def _chart_bars(
+        self,
+        *,
+        instrument: str,
+        signal_ts: datetime,
+        before: int,
+        after: int,
+        timeframe: str,
+    ) -> tuple[list[Any], str, list[str]]:
+        warnings: list[str] = []
+        needed = before + after + 1
+        history = [
+            bar for bar in scanner_context.get_history(instrument)
+            if getattr(bar, "instrument", None) == instrument
+        ]
+        history.sort(key=_bar_time_utc)
+        if self._signal_bar_index(history, signal_ts) is not None:
+            return history, "scanner_history", warnings
+
+        delta = _parse_timeframe_delta(timeframe)
+        fetch_count = max(needed + 30, 100)
+        if hasattr(self.price_feed, "fetch_bars_before"):
+            try:
+                to_ts = int((signal_ts + delta * (after + 1)).timestamp())
+                bars = self.price_feed.fetch_bars_before(
+                    instrument,
+                    to_timestamp_utc=to_ts,
+                    count=fetch_count,
+                )
+                bars = list(bars)
+                bars.sort(key=_bar_time_utc)
+                if bars:
+                    return bars, "broker_history", warnings
+            except Exception as e:  # noqa: BLE001
+                logger.warning("runtime: failed to fetch broker chart history", exc_info=True)
+                warnings.append(f"broker history fetch failed: {e}")
+
+        if hasattr(self.price_feed, "fetch_recent_bars"):
+            try:
+                bars = self.price_feed.fetch_recent_bars(
+                    instrument,
+                    total_bars=max(needed, self.config.bar_window),
+                )
+                bars = list(bars)
+                bars.sort(key=_bar_time_utc)
+                if bars:
+                    return bars, "broker_recent", warnings
+            except Exception as e:  # noqa: BLE001
+                logger.warning("runtime: failed to fetch recent chart history", exc_info=True)
+                warnings.append(f"recent history fetch failed: {e}")
+
+        if history:
+            warnings.append("scanner history does not include the signal source bar")
+            return history, "scanner_history", warnings
+        return [], "none", warnings
+
+    @staticmethod
+    def _signal_bar_index(bars: list[Any], signal_ts: datetime) -> int | None:
+        for i, bar in enumerate(bars):
+            if _bar_time_utc(bar) == signal_ts:
+                return i
+        return None
+
+    @staticmethod
+    def _chart_bar_payload(bar: Any) -> dict[str, Any]:
+        return {
+            "time": _bar_time_utc(bar).isoformat(),
+            "open": float(bar.open),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+            "volume": float(bar.volume),
         }
 
     def operator_status(self) -> dict[str, Any]:

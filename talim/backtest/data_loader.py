@@ -50,8 +50,9 @@ def load_ohlcv(
             if not timeframe_file.exists():
                 raise FileNotFoundError(
                     f"No {timeframe} parquet for {instrument} at {timeframe_file}. "
-                    f"Ingest via scripts/ingest_ig_prices.py or "
-                    f"scripts/ingest_forexcom_prices.py before running this backtest."
+                    f"Ingest via scripts/ingest_ig_prices.py, "
+                    f"scripts/ingest_forexcom_prices.py, or "
+                    f"scripts/ingest_dukascopy_ticks.py before running this backtest."
                 )
             df = _validate(pd.read_parquet(timeframe_file))
             if df.empty:

@@ -78,8 +78,16 @@ in Talim itself or only in the OpenClaw integration layer.
   active instruments + strategies, open P&L, daily P&L, account
   balance, halt status + HALT/Resume button (write-gated).
 - **Pending HITL** — the pending signal on `thread_id=cron-main`,
-  with Approve/Reject buttons (write-gated). POSTs to
+  including its durable `signal_id` and advisory validation status when
+  present, with Approve/Reject buttons (write-gated). POSTs to
   `/talim/operator/decision`.
+  Links of the form `/talim/dashboard/signal.html?signal=<signal_id>` open the
+  mobile-friendly standalone HITL signal page with the durable signal row,
+  original signal, latest validation fields, live pending validation when it is
+  still current, and approve/reject controls. Approve is disabled unless the
+  linked signal is the current pending signal and live validation allows
+  approval; stale/non-current links show a warning. The operator page still
+  shows compact pending-signal information and links out to this page.
 - **Open Positions** — live broker positions with per-position
   open P&L.
 - **Strategies** — all loadable strategies under `strategies/`, with

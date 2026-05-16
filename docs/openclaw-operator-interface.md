@@ -53,7 +53,10 @@ Returns the current checkpointed HITL state for a graph thread:
   "exists": true,
   "paused": true,
   "next_nodes": ["execute"],
+  "signal_id": "SIG-ABC123DEF456",
+  "dashboard_url": "http://127.0.0.1:8080/talim/dashboard/signal.html?signal=SIG-ABC123DEF456",
   "pending_signal": {
+    "signal_id": "SIG-ABC123DEF456",
     "instrument": "AU200.cash",
     "strategy": "momentum-AU200",
     "side": "long",
@@ -69,6 +72,20 @@ Returns the current checkpointed HITL state for a graph thread:
 ```
 
 `paused=true` with a non-null `pending_signal` is the normal approval state.
+When a pending signal exists, Talim records/updates a durable `signals` row,
+returns its `signal_id` plus a dashboard deep link, and includes advisory
+strategy validation status. In WP-77 this validation is indicative only; WP-78
+will enforce it during approval.
+
+## Signal Detail
+
+```http
+GET /talim/operator/signals/SIG-ABC123DEF456
+```
+
+Returns the durable signal lifecycle row, including original signal fields,
+status, dashboard URL, latest validation fields when implemented, and stored
+context from the HITL checkpoint.
 
 ## Approve Or Reject
 
@@ -78,12 +95,19 @@ Content-Type: application/json
 
 {
   "thread_id": "cron-main",
-  "approved": true
+  "approved": true,
+  "signal_id": "SIG-ABC123DEF456"
 }
 ```
 
-Approval resumes the graph and routes to `execute`. Rejection clears the
-pending signal and routes to notification without placing an order.
+Approval first verifies the optional `signal_id` still matches the current
+pending signal, refreshes broker state, runs strategy-specific signal
+validation, and reruns risk checks. Only then does it resume the graph and
+route to `execute`. If the id does not match, Talim refuses the decision and
+leaves the current pending signal untouched. If validation or risk blocks the
+signal, Talim records the refusal, clears the pending signal, and returns a
+blocking reason without placing an order. Rejection clears the pending signal
+and routes to notification without placing an order.
 
 Response:
 

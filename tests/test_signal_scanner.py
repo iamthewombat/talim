@@ -61,6 +61,42 @@ def _setup_scanner(df: pd.DataFrame, strategies: list[str] | None = None):
     return feed
 
 
+class _TimestampSignalStrategy:
+    """Test strategy that emits a signal on one configured bar timestamp."""
+
+    name = "momentum-US500"
+
+    def __init__(self, target_timestamp):
+        self.target_timestamp = target_timestamp
+
+    def reset(self):
+        pass
+
+    def on_bar(self, bar: OHLCVBar) -> Signal | None:
+        if bar.timestamp != self.target_timestamp:
+            return None
+        return Signal(
+            instrument=bar.instrument,
+            strategy=self.name,
+            side="long",
+            entry_price=bar.close,
+            stop=bar.close - 10,
+            target=bar.close + 20,
+            rationale="unit-test EMA cross",
+            regime_context="",
+            timestamp=bar.timestamp,
+        )
+
+
+def _setup_scanner_with_strategy(df: pd.DataFrame, strategy):
+    feed = MockPriceFeed(source=df, instrument="ES")
+    configure_scanner(feed, strategies=[strategy])
+    feed.connect()
+    feed.subscribe("ES")
+    bars = feed.replay()
+    return feed, bars
+
+
 class _PollingFeed(BasePriceFeed):
     def __init__(self, bars: list[OHLCVBar]):
         super().__init__()
@@ -185,15 +221,21 @@ class TestSignalScannerNode:
         update = signal_scanner({})
         assert update.get("pending_signal") is None
 
-    def test_signal_on_trending_market(self):
-        df = _make_trending_df(100)
-        _setup_scanner(df)
-        update = signal_scanner({})
+    def test_signal_on_latest_bar(self):
+        df = _make_flat_df(80)
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(feed, strategies=[])
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-1].timestamp))
+
+        update = signal_scanner({"regime": "momentum"})
         sig = update.get("pending_signal")
         assert sig is not None
         assert isinstance(sig, Signal)
         assert sig.strategy == "momentum-US500"
-        assert sig.side in ("long", "short")
+        assert sig.timestamp == bars[-1].timestamp
 
     def test_regime_change_flag(self):
         df = _make_flat_df(80)
@@ -213,12 +255,56 @@ class TestSignalScannerNode:
         assert third.get("regime_changed") is False
 
     def test_regime_context_attached_to_signal(self):
-        df = _make_trending_df(100)
-        _setup_scanner(df)
+        df = _make_flat_df(80)
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(feed, strategies=[])
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-1].timestamp))
+
         update = signal_scanner({"regime": "momentum"})
         sig = update.get("pending_signal")
         assert sig is not None
         assert sig.regime_context == "momentum"
+
+    def test_stale_cross_in_warmup_window_is_not_realerted(self):
+        df = _make_flat_df(80)
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(feed, strategies=[])
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-2].timestamp))
+
+        update = signal_scanner({"regime": "momentum"})
+        assert update.get("pending_signal") is None
+
+    def test_duplicate_same_bar_signal_is_suppressed(self):
+        df = _make_flat_df(80)
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(feed, strategies=[])
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-1].timestamp))
+
+        first = signal_scanner({"regime": "momentum"})
+        second = signal_scanner({"regime": "momentum"})
+        assert first.get("pending_signal") is not None
+        assert second.get("pending_signal") is None
+
+    def test_momentum_signal_suppressed_in_ranging_regime(self):
+        df = _make_flat_df(80)
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(feed, strategies=[])
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-1].timestamp))
+
+        update = signal_scanner({"regime": "ranging"})
+        assert update.get("pending_signal") is None
 
     def test_live_feed_can_prime_history_on_demand(self):
         _context.reset()

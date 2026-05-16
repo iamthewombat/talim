@@ -7,6 +7,7 @@ from talim.models.signal import Signal
 from talim.strategy.base import BaseStrategy
 from talim.strategy.indicators import AtrStream, EmaStream
 from talim.strategy.params import ParamSpec
+from talim.strategy.validation import ValidationResult, default_validate_signal
 
 
 class MomentumAU200(BaseStrategy):
@@ -55,6 +56,59 @@ class MomentumAU200(BaseStrategy):
     def load_params(self, params: dict) -> None:
         super().load_params(params)
         self._init_indicators()
+
+    def validate_signal(
+        self,
+        signal: Signal,
+        bars: list[OHLCVBar],
+        *,
+        atr: float | None = None,
+    ) -> ValidationResult:
+        base = default_validate_signal(
+            signal,
+            bars,
+            max_bars_since_signal=3,
+            max_adverse_r=0.25,
+            max_favourable_r=0.75,
+            atr=atr,
+        )
+        if not base.approval_allowed:
+            return base
+        if len(bars) < self.ema_slow_period:
+            return ValidationResult(
+                status="data_unavailable",
+                approval_allowed=False,
+                reason=f"need at least {self.ema_slow_period} bars for EMA validation",
+                current_price=base.current_price,
+                movement_r=base.movement_r,
+                movement_atr=base.movement_atr,
+                bars_since_signal=base.bars_since_signal,
+                evaluated_at=base.evaluated_at,
+            )
+        fast_stream = EmaStream(self.ema_fast_period)
+        slow_stream = EmaStream(self.ema_slow_period)
+        atr_stream = AtrStream(period=self.atr_period)
+        fast = slow = atr_now = 0.0
+        for bar in bars:
+            atr_now = atr_stream.update(bar.high, bar.low, bar.close)
+            fast = fast_stream.update(bar.close)
+            slow = slow_stream.update(bar.close)
+        if atr_now > 0 and abs(fast - slow) < self.min_ema_gap_atr * atr_now:
+            return ValidationResult(
+                status="condition_invalidated",
+                approval_allowed=False,
+                reason="momentum invalidated: EMA separation is below the ATR-backed threshold",
+                current_price=base.current_price,
+                movement_r=base.movement_r,
+                movement_atr=base.movement_atr,
+                bars_since_signal=base.bars_since_signal,
+                evaluated_at=base.evaluated_at,
+            )
+        if signal.side.lower() == "long" and fast <= slow:
+            return ValidationResult("condition_invalidated", False, f"momentum invalidated: EMA({self.ema_fast_period}) is no longer above EMA({self.ema_slow_period})", base.current_price, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
+        if signal.side.lower() == "short" and fast >= slow:
+            return ValidationResult("condition_invalidated", False, f"momentum invalidated: EMA({self.ema_fast_period}) is no longer below EMA({self.ema_slow_period})", base.current_price, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
+        return ValidationResult("valid", True, "momentum condition and ATR-backed separation still hold", base.current_price, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
 
     def on_bar(self, bar: OHLCVBar) -> Signal | None:
         self._bars_seen += 1

@@ -50,3 +50,37 @@ CREATE INDEX IF NOT EXISTS idx_strategy_activations_strategy
     ON strategy_activations(strategy);
 CREATE INDEX IF NOT EXISTS idx_strategy_activations_timestamp
     ON strategy_activations(timestamp);
+
+
+CREATE TABLE IF NOT EXISTS signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id TEXT NOT NULL UNIQUE,
+    thread_id TEXT NOT NULL DEFAULT 'cron-main',
+    status TEXT NOT NULL DEFAULT 'pending',
+    instrument TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    side TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT 'enter',
+    entry_price REAL NOT NULL,
+    stop REAL NOT NULL,
+    target REAL NOT NULL,
+    rationale TEXT NOT NULL DEFAULT '',
+    regime TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0.0,
+    source_bar_timestamp TEXT DEFAULT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    approved_at TEXT DEFAULT NULL,
+    rejected_at TEXT DEFAULT NULL,
+    executed_at TEXT DEFAULT NULL,
+    decision_actor TEXT DEFAULT NULL,
+    latest_validation_status TEXT DEFAULT NULL,
+    latest_validation_reason TEXT DEFAULT NULL,
+    dashboard_url TEXT DEFAULT NULL,
+    context_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(status);
+CREATE INDEX IF NOT EXISTS idx_signals_strategy ON signals(strategy);
+CREATE INDEX IF NOT EXISTS idx_signals_instrument ON signals(instrument);
+CREATE INDEX IF NOT EXISTS idx_signals_created_at ON signals(created_at);

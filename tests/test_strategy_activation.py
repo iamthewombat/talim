@@ -214,3 +214,185 @@ class TestOperatorActivationEndpoints:
         assert client.post(
             "/talim/operator/strategies/momentum-US500/disable"
         ).status_code in (401, 403)
+
+
+class TestOperatorSignalLifecycle:
+    def test_pending_records_durable_signal_and_detail_endpoint(self, monkeypatch, tmp_path):
+        from talim.app.graph import build_graph
+        from talim.models.signal import Signal
+
+        monkeypatch.setenv("TALIM_PUBLIC_BASE_URL", "http://operator.test/talim")
+        client, rt = TestOperatorActivationEndpoints()._client(monkeypatch, tmp_path)
+        graph = build_graph(checkpointer=rt.checkpointer)
+        cfg = {"configurable": {"thread_id": "cron-main"}}
+        pending = Signal(
+            strategy="momentum-US500",
+            instrument="ES",
+            side="long",
+            entry_price=5000.0,
+            stop=4950.0,
+            target=5100.0,
+            rationale="unit-test signal",
+            regime_context="ranging",
+        )
+        graph.update_state(cfg, {
+            "pending_signal": pending,
+            "pending_notification": "pending test",
+            "atr_current": 12.5,
+            "regime": "ranging",
+        })
+
+        r = client.get(
+            "/talim/operator/pending?thread_id=cron-main",
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        signal_id = body["signal_id"]
+        assert signal_id.startswith("SIG-")
+        assert body["pending_signal"]["signal_id"] == signal_id
+        assert body["dashboard_url"].endswith(f"/dashboard/signal.html?signal={signal_id}")
+
+        detail = client.get(
+            f"/talim/operator/signals/{signal_id}",
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert detail.status_code == 200
+        signal = detail.json()["signal"]
+        assert signal["signal_id"] == signal_id
+        assert signal["status"] == "pending"
+        assert signal["strategy"] == "momentum-US500"
+        assert signal["context"]["atr_current"] == 12.5
+
+    def test_signal_detail_404(self, monkeypatch, tmp_path):
+        client, _ = TestOperatorActivationEndpoints()._client(monkeypatch, tmp_path)
+        r = client.get(
+            "/talim/operator/signals/SIG-NOPE",
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 404
+
+
+class TestSignalValidation:
+    def test_momentum_validation_blocks_wrong_ema_side(self):
+        from datetime import datetime, timezone, timedelta
+        from talim.models.bar import OHLCVBar
+        from talim.models.signal import Signal
+        from talim.strategy.loader import load_strategy
+
+        strat = load_strategy("momentum-US500")
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        closes = [100 + i for i in range(30)] + [130 - i for i in range(20)]
+        bars = [OHLCVBar(
+            instrument="US500.cash",
+            timestamp=start + timedelta(minutes=5 * i),
+            open=c, high=c + 1, low=c - 1, close=c, volume=1000, timeframe="5m",
+        ) for i, c in enumerate(closes)]
+        sig = Signal(
+            instrument="US500.cash", strategy="momentum-US500", side="long",
+            entry_price=112, stop=100, target=136, rationale="test",
+            regime_context="", timestamp=bars[-2].timestamp,
+        )
+        result = strat.validate_signal(sig, bars, atr=2.0)
+        assert result.status == "condition_invalidated"
+        assert result.approval_allowed is False
+
+    def test_pending_endpoint_includes_validation(self, monkeypatch, tmp_path):
+        from datetime import datetime, timezone, timedelta
+        from talim.app.graph import build_graph
+        from talim.app.nodes.signal_scanner import _context as scanner_context
+        from talim.models.bar import OHLCVBar
+        from talim.models.signal import Signal
+
+        client, rt = TestOperatorActivationEndpoints()._client(monkeypatch, tmp_path)
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(50):
+            c = 5000 + i
+            scanner_context.record_bar(OHLCVBar(
+                instrument="ES", timestamp=start + timedelta(minutes=5 * i),
+                open=c, high=c + 1, low=c - 1, close=c, volume=1000, timeframe="5m",
+            ))
+        graph = build_graph(checkpointer=rt.checkpointer)
+        cfg = {"configurable": {"thread_id": "cron-main"}}
+        pending = Signal(
+            strategy="momentum-US500", instrument="ES", side="long",
+            entry_price=5048, stop=5040, target=5064, rationale="test",
+            regime_context="ranging", timestamp=start + timedelta(minutes=5 * 48),
+        )
+        graph.update_state(cfg, {"pending_signal": pending, "atr_current": 2.0})
+        r = client.get("/talim/operator/pending?thread_id=cron-main", headers={"X-Talim-Secret": SECRET})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["validation"]["status"] in {"valid", "price_moved_too_far", "condition_invalidated"}
+        assert body["pending_signal"]["validation"] == body["validation"]
+
+
+class TestApprovalValidationEnforcement:
+    def test_operator_approve_blocks_stale_signal(self, monkeypatch, tmp_path):
+        from datetime import datetime, timezone, timedelta
+        from talim.app.graph import build_graph
+        from talim.app.nodes.signal_scanner import _context as scanner_context
+        from talim.models.bar import OHLCVBar
+        from talim.models.signal import Signal
+
+        client, rt = TestOperatorActivationEndpoints()._client(monkeypatch, tmp_path)
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        for i in range(50):
+            c = 5000 + i
+            scanner_context.record_bar(OHLCVBar(
+                instrument="ES", timestamp=start + timedelta(minutes=5 * i),
+                open=c, high=c + 1, low=c - 1, close=c, volume=1000, timeframe="5m",
+            ))
+        graph = build_graph(checkpointer=rt.checkpointer)
+        cfg = {"configurable": {"thread_id": "cron-main"}}
+        pending = Signal(
+            strategy="momentum-US500", instrument="ES", side="long",
+            entry_price=5020, stop=5010, target=5040, rationale="test",
+            regime_context="ranging", timestamp=start + timedelta(minutes=5 * 20),
+        )
+        graph.update_state(cfg, {"pending_signal": pending, "atr_current": 2.0})
+        pending_resp = client.get("/talim/operator/pending?thread_id=cron-main", headers={"X-Talim-Secret": SECRET})
+        signal_id = pending_resp.json()["signal_id"]
+
+        r = client.post(
+            "/talim/operator/decision",
+            json={"thread_id": "cron-main", "approved": True},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["pending_signal_cleared"] is True
+        assert "Approval blocked" in body["last_action"]
+
+        row = rt.episodic.get_signal(signal_id)
+        assert row is not None
+        assert row["status"] == "expired"
+        assert row["latest_validation_status"] == "stale"
+
+
+class TestSignalIdDecisionPath:
+    def test_signal_id_mismatch_blocks_without_clearing(self, monkeypatch, tmp_path):
+        from datetime import datetime, timezone
+        from talim.app.graph import build_graph
+        from talim.models.signal import Signal
+
+        client, rt = TestOperatorActivationEndpoints()._client(monkeypatch, tmp_path)
+        graph = build_graph(checkpointer=rt.checkpointer)
+        cfg = {"configurable": {"thread_id": "cron-main"}}
+        pending = Signal(
+            strategy="momentum-US500", instrument="ES", side="long",
+            entry_price=5000, stop=4990, target=5020, rationale="test",
+            regime_context="ranging", timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        graph.update_state(cfg, {"pending_signal": pending})
+        r = client.post(
+            "/talim/operator/decision",
+            json={"thread_id": "cron-main", "approved": False, "signal_id": "SIG-WRONG"},
+            headers={"X-Talim-Secret": SECRET},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["pending_signal_cleared"] is False
+        assert "Decision blocked" in body["last_action"]
+        snap = graph.get_state(cfg)
+        assert snap.values["pending_signal"] is not None
