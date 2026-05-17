@@ -8,6 +8,7 @@ from typing import Any
 from talim.models.bar import OHLCVBar
 from talim.models.signal import Signal
 from talim.strategy.params import ParamSpec, validate_param_dict
+from talim.strategy.validation import ValidationResult, default_validate_signal
 
 
 class BaseStrategy(ABC):
@@ -59,6 +60,21 @@ class BaseStrategy(ABC):
     def reset(self) -> None:
         """Reset internal state (e.g. between backtest runs)."""
         pass
+
+    def validate_signal(
+        self,
+        signal: Signal,
+        bars: list[OHLCVBar],
+        *,
+        atr: float | None = None,
+    ) -> ValidationResult:
+        """Return whether a pending HITL signal is still actionable.
+
+        Subclasses should override this for strategy-specific semantics. The
+        base implementation is intentionally conservative and checks only
+        freshness plus price movement from the original entry in R/ATR terms.
+        """
+        return default_validate_signal(signal, bars, atr=atr)
 
     @classmethod
     def params_schema(cls) -> list[dict[str, Any]]:

@@ -117,6 +117,15 @@ function renderError(node, err) {
 
 function writesAllowed() { return state.authenticated && state.unlocked; }
 
+function requestedSignalId() {
+  return new URLSearchParams(window.location.search).get("signal");
+}
+
+function validationText(v) {
+  if (!v) return "—";
+  return `${v.status || "unknown"} · approval ${v.approval_allowed ? "allowed" : "blocked"}`;
+}
+
 // ---------------------------------------------------------------------------
 // Runtime status
 // ---------------------------------------------------------------------------
@@ -199,6 +208,7 @@ async function refreshPending() {
       dl.appendChild(el("dt", { text: k }));
       dl.appendChild(el("dd", { text: v == null ? "—" : String(v) }));
     };
+    if (data.signal_id || s.signal_id) pushRow("signal id", data.signal_id || s.signal_id);
     pushRow("instrument", s.instrument);
     pushRow("strategy", s.strategy);
     pushRow("side", s.side);
@@ -207,23 +217,44 @@ async function refreshPending() {
     pushRow("target", fmtNum(s.target, 4));
     if (s.rationale) pushRow("rationale", s.rationale);
     pushRow("paused", data.paused);
+    if (data.validation || s.validation) {
+      const v = data.validation || s.validation;
+      pushRow("validation", `${v.status || "unknown"} · approval ${v.approval_allowed ? "allowed" : "blocked"}`);
+      if (v.reason) pushRow("validation reason", v.reason);
+      if (v.current_price != null) pushRow("current price", fmtNum(v.current_price, 4));
+      if (v.movement_r != null) pushRow("move from entry", `${fmtNum(v.movement_r, 2)}R`);
+      if (v.bars_since_signal != null) pushRow("bars since signal", v.bars_since_signal);
+    }
     if (data.pending_notification) pushRow("notification", data.pending_notification);
+    if (data.dashboard_url) pushRow("dashboard link", data.dashboard_url);
     body.appendChild(dl);
+
+    const requestedSignal = requestedSignalId();
+    if (requestedSignal && requestedSignal !== (data.signal_id || s.signal_id)) {
+      body.appendChild(el("div", { class: "warn", text: `linked signal ${requestedSignal} is not the current pending signal` }));
+    }
+
+    const approvalAllowed = !(data.validation || s.validation) || (data.validation || s.validation).approval_allowed;
+    if (!writesAllowed()) {
+      body.appendChild(el("div", { class: "warn", text: "Writes are locked — click Unlock writes before approving or rejecting." }));
+    } else if (!approvalAllowed) {
+      body.appendChild(el("div", { class: "warn", text: "Approval is blocked by validation; reject remains available to clear the stale/invalid signal." }));
+    }
 
     const controls = el("div", { class: "inline-controls" });
     const approve = el("button", {
       type: "button",
       class: "ok",
       text: "Approve",
-      disabled: !writesAllowed(),
-      onClick: () => sendDecision(true),
+      disabled: !writesAllowed() || !approvalAllowed,
+      onClick: () => sendDecision(true, data.signal_id || s.signal_id),
     });
     const reject = el("button", {
       type: "button",
       class: "danger",
       text: "Reject",
       disabled: !writesAllowed(),
-      onClick: () => sendDecision(false),
+      onClick: () => sendDecision(false, data.signal_id || s.signal_id),
     });
     controls.appendChild(approve);
     controls.appendChild(reject);
@@ -233,16 +264,104 @@ async function refreshPending() {
   }
 }
 
-async function sendDecision(approved) {
+async function sendDecision(approved, signalId) {
   const verb = approved ? "Approve" : "Reject";
-  if (!confirm(`${verb} the pending signal on thread ${THREAD_ID}?`)) return;
+  const suffix = signalId ? ` signal ${signalId}` : ` the pending signal on thread ${THREAD_ID}`;
+  if (!confirm(`${verb}${suffix}?`)) return;
   try {
-    await api("/talim/operator/decision", {
+    const result = await api("/talim/operator/decision", {
       method: "POST",
-      body: JSON.stringify({ thread_id: THREAD_ID, approved }),
+      body: JSON.stringify({ thread_id: THREAD_ID, approved, signal_id: signalId || null }),
     });
+    if (result.last_action) alert(result.last_action);
     await refreshAll();
   } catch (err) { alert("Decision failed: " + err.message); }
+}
+
+// ---------------------------------------------------------------------------
+// Signal detail
+// ---------------------------------------------------------------------------
+
+async function refreshSignalDetail() {
+  const panel = document.getElementById("panel-signal-detail");
+  const body = document.getElementById("signal-detail-body");
+  const signalId = requestedSignalId();
+  if (!signalId) {
+    panel.hidden = true;
+    clear(body);
+    return;
+  }
+  panel.hidden = false;
+  try {
+    const data = await api("/talim/operator/signals/" + encodeURIComponent(signalId));
+    const s = data.signal || {};
+    clear(body);
+
+    const dl = el("dl", { class: "kv" });
+    const pushRow = (k, v, cls) => {
+      dl.appendChild(el("dt", { text: k }));
+      dl.appendChild(el("dd", { text: v == null ? "—" : String(v), class: cls || "" }));
+    };
+    pushRow("signal id", s.signal_id);
+    pushRow("status", s.status);
+    pushRow("instrument", s.instrument);
+    pushRow("strategy", s.strategy);
+    pushRow("side", s.side);
+    pushRow("entry", fmtNum(s.entry_price, 4));
+    pushRow("stop", fmtNum(s.stop, 4));
+    pushRow("target", fmtNum(s.target, 4));
+    pushRow("source bar", fmtTs(s.source_bar_timestamp));
+    pushRow("created", fmtTs(s.created_at));
+    pushRow("updated", fmtTs(s.updated_at));
+    pushRow("latest validation", validationText({
+      status: s.latest_validation_status,
+      approval_allowed: s.latest_validation_status === "valid",
+    }));
+    if (s.latest_validation_reason) pushRow("validation reason", s.latest_validation_reason);
+    if (s.rationale) pushRow("rationale", s.rationale);
+    const detailUrl = `/talim/dashboard/signal.html?signal=${encodeURIComponent(s.signal_id)}`;
+    pushRow("signal page", detailUrl);
+    if (s.dashboard_url) pushRow("dashboard link", s.dashboard_url);
+    body.appendChild(dl);
+    body.appendChild(el("div", { class: "inline-controls" }, [
+      el("a", { class: "nav-link", href: detailUrl, text: "Open signal page" }),
+    ]));
+
+    const currentPending = await api("/talim/operator/pending?thread_id=" + encodeURIComponent(THREAD_ID));
+    const isCurrent = currentPending.signal_id === signalId;
+    if (!isCurrent) {
+      body.appendChild(el("div", { class: "warn", text: "This signal is not the current pending HITL signal. Approval is unavailable from this detail view." }));
+    } else if (currentPending.validation) {
+      const v = currentPending.validation;
+      const vdl = el("dl", { class: "kv detail" });
+      const pushV = (k, val) => {
+        vdl.appendChild(el("dt", { text: k }));
+        vdl.appendChild(el("dd", { text: val == null ? "—" : String(val) }));
+      };
+      pushV("live validation", validationText(v));
+      pushV("live reason", v.reason);
+      pushV("current price", fmtNum(v.current_price, 4));
+      pushV("move from entry", v.movement_r == null ? "—" : `${fmtNum(v.movement_r, 2)}R`);
+      pushV("bars since signal", v.bars_since_signal);
+      body.appendChild(vdl);
+    }
+
+    const controls = el("div", { class: "inline-controls" });
+    controls.appendChild(el("button", { type: "button", text: "Refresh validation", onClick: refreshAll }));
+    controls.appendChild(el("button", {
+      type: "button", class: "ok", text: "Approve current signal",
+      disabled: !writesAllowed() || !isCurrent || !(currentPending.validation && currentPending.validation.approval_allowed),
+      onClick: () => sendDecision(true, signalId),
+    }));
+    controls.appendChild(el("button", {
+      type: "button", class: "danger", text: "Reject current signal",
+      disabled: !writesAllowed() || !isCurrent,
+      onClick: () => sendDecision(false, signalId),
+    }));
+    body.appendChild(controls);
+  } catch (err) {
+    renderError(body, err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -548,6 +667,13 @@ function bindHeader() {
     syncAuthUi();
     refreshAll();
   });
+  const clearSignal = document.getElementById("clear-signal-link");
+  if (clearSignal) {
+    clearSignal.addEventListener("click", () => {
+      history.replaceState(null, "", window.location.pathname);
+      refreshAll();
+    });
+  }
 }
 
 function bindFilters() {
@@ -583,6 +709,7 @@ async function refreshAll() {
   await Promise.all([
     refreshStatus(),
     refreshPending(),
+    refreshSignalDetail(),
     refreshPositions(),
     refreshStrategies(),
     refreshDecisions(),

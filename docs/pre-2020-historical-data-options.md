@@ -37,7 +37,8 @@ The highest-compatibility outcome is another source that can be normalised to ex
 - **Why it matters:** Most promising free non-IG/FOREX.com source for long intraday history that may include index CFD-like instruments.
 - **Observed floor checks:** raw datafeed probes found `USA500IDXUSD` available by 2012/2015 and `AUSIDXAUD` available by 2015/2020; `EURUSD` exists at least by 2007 in the same feed. Treat these as approximate symbol/date floors until a proper downloader confirms earliest non-empty trading days.
 - **Risk:** Need symbol-level proof, timestamp/session validation, and a terms/licence check before depending on it.
-- **Next action:** Download small `USA500IDXUSD` and `AUSIDXAUD` samples, decode BI5 ticks, aggregate to 5m/1h, then normalise to Talim schema.
+- **Prototype status:** `scripts/ingest_dukascopy_ticks.py` now downloads BI5 ticks, decodes, aggregates, and writes Talim Parquet. One-hour 2015 samples succeeded for `USA500IDXUSD` and `AUSIDXAUD` under `data/backtest/dukascopy-sample/`.
+- **Next action:** Extend the importer with a coverage scanner/resume manifest, then download full years in controlled batches.
 - **Storage:** keep separate as `source=dukascopy`; do not merge into `forexcom`.
 
 ### 3. Stooq historical archives — free, good proxy data
@@ -91,7 +92,7 @@ The highest-compatibility outcome is another source that can be normalised to ex
 1. **Probe broker-compatible sources first**
    - Re-run IG historical ingest now that allowance may have reset.
    - Re-run FOREX.com with explicit pre-2020 starts to confirm true floor.
-   - Try a Dukascopy sample for index equivalents.
+   - Dukascopy sample importer is working for `USA500IDXUSD` and `AUSIDXAUD`; next step is full coverage scanning/downloading.
 
 2. **Build a generic external-data importer**
    - Input: vendor CSV/API.

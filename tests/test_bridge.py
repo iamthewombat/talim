@@ -202,6 +202,36 @@ class TestOperatorDashboard:
         r = client.get("/talim/dashboard/style.css")
         assert r.status_code == 200
         assert "text/css" in r.headers["content-type"]
+        assert "overscroll-behavior: contain" in r.text
+        assert "touch-action: none" in r.text
+
+    def test_signal_page_assets_served(self, client):
+        r = client.get("/talim/dashboard/signal.html")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        assert "Talim Signal" in r.text
+        assert "signal.js" in r.text
+        assert "lightweight-charts" in r.text
+        assert "id=\"signal-chart\"" in r.text
+        assert "id=\"decision-context-body\"" in r.text
+        assert "Decision context" in r.text
+        assert "viewport" in r.text
+
+        r = client.get("/talim/dashboard/signal.js")
+        assert r.status_code == 200
+        assert "javascript" in r.headers["content-type"]
+        assert "/talim/operator/signals/" in r.text
+        assert "CHART_INITIAL_BEFORE = 160" in r.text
+        assert "CHART_INITIAL_AFTER = 60" in r.text
+        assert "subscribeVisibleLogicalRangeChange" in r.text
+        assert "refreshLiveOnly" in r.text
+        assert "setInterval(refreshLiveOnly, 15000)" in r.text
+        assert "/talim/operator/decision" in r.text
+        assert "createPriceLine" in r.text
+        assert "setMarkers" in r.text
+        assert "renderDecisionContext" in r.text
+        assert "EMA(8) crossed" in r.text
+        assert "Approval gate" in r.text
 
     def test_dashboard_is_public_html_shell(self, client):
         # The HTML shell is public so the operator can load the page before
@@ -229,3 +259,75 @@ class TestRealRoundTrip:
         body = r.json()
         # Real notify with no LLM client falls back to "ack".
         assert body["response_message"] == "ack"
+
+
+class TestOperatorDecisionEndpoint:
+    def test_passes_signal_id_to_runtime(self, client):
+        calls = []
+
+        class FakeRuntime:
+            def resume(self, *, thread_id, approved, signal_id=None):
+                calls.append((thread_id, approved, signal_id))
+                return {
+                    "pending_signal": None,
+                    "last_action": f"handled {signal_id}",
+                }
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.post(
+            "/talim/operator/decision",
+            json={"thread_id": "cron-main", "approved": False, "signal_id": "SIG-123"},
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["last_action"] == "handled SIG-123"
+        assert calls == [("cron-main", False, "SIG-123")]
+
+
+class TestOperatorSignalChartEndpoint:
+    def test_requires_secret(self, client):
+        r = client.get("/talim/operator/signals/SIG-123/chart")
+        assert r.status_code == 401
+
+    def test_returns_chart_from_runtime(self, client):
+        calls = []
+
+        class FakeRuntime:
+            def operator_signal_chart(self, *, signal_id, before=50, after=20):
+                calls.append((signal_id, before, after))
+                return {
+                    "signal_id": signal_id,
+                    "status": "ok",
+                    "source": "scanner_history",
+                    "timeframe": "5m",
+                    "requested": {"before": before, "after": after},
+                    "signal": {"instrument": "US500.cash"},
+                    "candles": [],
+                    "indicators": {},
+                    "levels": {},
+                    "warnings": [],
+                }
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.get(
+            "/talim/operator/signals/SIG-123/chart?before=20&after=7",
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["requested"] == {"before": 20, "after": 7}
+        assert calls == [("SIG-123", 20, 7)]
+
+    def test_returns_404_for_unknown_signal(self, client):
+        class FakeRuntime:
+            def operator_signal_chart(self, *, signal_id, before=50, after=20):
+                return None
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.get(
+            "/talim/operator/signals/SIG-MISSING/chart",
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 404

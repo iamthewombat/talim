@@ -91,15 +91,36 @@ class PendingSignalResponse(BaseModel):
     exists: bool
     paused: bool
     next_nodes: list[str] = Field(default_factory=list)
+    signal_id: str | None = None
+    dashboard_url: str | None = None
+    validation: dict[str, Any] | None = None
     pending_signal: dict[str, Any] | None = None
     pending_notification: str | None = None
     signal_approved: bool | None = None
     last_action: str | None = None
 
 
+class OperatorSignalResponse(BaseModel):
+    signal: dict[str, Any]
+
+
+class OperatorSignalChartResponse(BaseModel):
+    signal_id: str | None = None
+    status: str
+    source: str
+    timeframe: str
+    requested: dict[str, Any]
+    signal: dict[str, Any]
+    candles: list[dict[str, Any]] = Field(default_factory=list)
+    indicators: dict[str, Any] = Field(default_factory=dict)
+    levels: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class OperatorDecisionRequest(BaseModel):
     thread_id: str = Field(..., min_length=1)
     approved: bool
+    signal_id: str | None = None
 
 
 class OperatorDecisionResponse(BaseModel):
@@ -352,6 +373,40 @@ def create_app(
         rt = require_runtime()
         return PendingSignalResponse(**rt.pending_signal_status(thread_id=thread_id))
 
+    @app.get(
+        "/talim/operator/signals/{signal_id}/chart",
+        response_model=OperatorSignalChartResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_signal_chart(
+        signal_id: str,
+        before: int = 50,
+        after: int = 20,
+    ) -> OperatorSignalChartResponse:
+        """Return chart candles and indicator overlays around one signal."""
+        rt = require_runtime()
+        chart = rt.operator_signal_chart(
+            signal_id=signal_id,
+            before=before,
+            after=after,
+        )
+        if chart is None:
+            raise HTTPException(status_code=404, detail="signal not found")
+        return OperatorSignalChartResponse(**chart)
+
+    @app.get(
+        "/talim/operator/signals/{signal_id}",
+        response_model=OperatorSignalResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_signal(signal_id: str) -> OperatorSignalResponse:
+        """Return one durable signal lifecycle row."""
+        rt = require_runtime()
+        signal = rt.operator_signal(signal_id=signal_id)
+        if signal is None:
+            raise HTTPException(status_code=404, detail="signal not found")
+        return OperatorSignalResponse(signal=signal)
+
     @app.post(
         "/talim/operator/decision",
         response_model=OperatorDecisionResponse,
@@ -360,7 +415,11 @@ def create_app(
     def operator_decision(req: OperatorDecisionRequest) -> OperatorDecisionResponse:
         """Approve or reject the pending signal for one graph thread."""
         rt = require_runtime()
-        final = rt.resume(thread_id=req.thread_id, approved=req.approved)
+        final = rt.resume(
+            thread_id=req.thread_id,
+            approved=req.approved,
+            signal_id=req.signal_id,
+        )
         return OperatorDecisionResponse(
             thread_id=req.thread_id,
             approved=req.approved,

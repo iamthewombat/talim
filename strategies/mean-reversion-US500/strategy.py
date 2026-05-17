@@ -7,6 +7,7 @@ from talim.models.signal import Signal
 from talim.strategy.base import BaseStrategy
 from talim.strategy.indicators import AtrStream, BollingerStream
 from talim.strategy.params import ParamSpec
+from talim.strategy.validation import ValidationResult, default_validate_signal
 
 
 class MeanReversionUS500(BaseStrategy):
@@ -46,6 +47,45 @@ class MeanReversionUS500(BaseStrategy):
     def load_params(self, params: dict) -> None:
         super().load_params(params)
         self._init_indicators()
+
+    def validate_signal(
+        self,
+        signal: Signal,
+        bars: list[OHLCVBar],
+        *,
+        atr: float | None = None,
+    ) -> ValidationResult:
+        base = default_validate_signal(
+            signal,
+            bars,
+            max_bars_since_signal=2,
+            max_adverse_r=0.20,
+            max_favourable_r=0.65,
+            atr=atr,
+        )
+        if not base.approval_allowed:
+            return base
+        bb = BollingerStream(self.bb_period, self.bb_std)
+        bands = None
+        for bar in bars:
+            bands = bb.update(bar.close)
+        if bands is None:
+            return ValidationResult(
+                status="data_unavailable",
+                approval_allowed=False,
+                reason=f"need at least {self.bb_period} bars for Bollinger validation",
+                current_price=base.current_price,
+                movement_r=base.movement_r,
+                movement_atr=base.movement_atr,
+                bars_since_signal=base.bars_since_signal,
+                evaluated_at=base.evaluated_at,
+            )
+        current = bars[-1].close
+        if signal.side.lower() == "long" and current >= bands.middle:
+            return ValidationResult("condition_invalidated", False, "mean reversion invalidated: price has already reverted to/through the Bollinger midline", current, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
+        if signal.side.lower() == "short" and current <= bands.middle:
+            return ValidationResult("condition_invalidated", False, "mean reversion invalidated: price has already reverted to/through the Bollinger midline", current, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
+        return ValidationResult("valid", True, "mean-reversion condition remains before Bollinger midline reversion", current, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
 
     def on_bar(self, bar: OHLCVBar) -> Signal | None:
         atr = self._atr.update(bar.high, bar.low, bar.close)
