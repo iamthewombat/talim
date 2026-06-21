@@ -174,6 +174,27 @@ class EpisodicMemory:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def close_pending_entries(self, *, instrument: str, side: str) -> int:
+        """Mark pending `enter` decisions for an instrument+side as closed.
+
+        Called by the execute node after a successful exit so the entry row's
+        outcome reflects reality and the reconcile node stops flagging it as
+        a divergence. Returns the number of rows updated.
+        """
+        cur = self._conn.execute(
+            """
+            UPDATE decisions
+            SET outcome = 'closed'
+            WHERE instrument = ?
+              AND side = ?
+              AND signal_type = 'enter'
+              AND outcome = 'pending'
+            """,
+            (instrument, side),
+        )
+        self._conn.commit()
+        return cur.rowcount or 0
+
     def get_stats(self, strategy: str) -> dict:
         """Get aggregate stats for a strategy."""
         rows = self._conn.execute(

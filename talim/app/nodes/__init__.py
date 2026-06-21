@@ -46,6 +46,12 @@ def execute(state: TalimState) -> TalimState:
     """
     from datetime import datetime, timezone
     from talim.app.execute_context import get_execute_context
+    from talim.connectors.discord.closeout import (
+        CloseoutEvent,
+        derive_reason,
+        now_utc,
+        post_closeout,
+    )
     from talim.connectors.exchange.base import OrderStatus
     from talim.metrics import METRICS
 
@@ -58,10 +64,11 @@ def execute(state: TalimState) -> TalimState:
     if ctx.exchange is None:
         logger.info("execute: no exchange configured, skipping order placement")
         update["last_action"] = (
-            f"would-execute {sig.side} {sig.instrument} ({sig.strategy})"
+            f"would-execute {sig.action} {sig.side} {sig.instrument} ({sig.strategy})"
         )
         return update
 
+    closing_position = None
     try:
         if sig.action == "exit":
             position = _matching_position(sig, list(state.get("active_positions") or []))
@@ -73,6 +80,7 @@ def execute(state: TalimState) -> TalimState:
                     "no matching open position"
                 )
                 return update
+            closing_position = position
             order = ctx.exchange.close_position(position, strategy=sig.strategy)
         else:
             order = ctx.exchange.place_order(
@@ -100,6 +108,39 @@ def execute(state: TalimState) -> TalimState:
                 update["active_positions"] = ctx.exchange.get_positions()
             except Exception:  # noqa: BLE001
                 logger.warning("execute: failed to refresh positions", exc_info=True)
+            if sig.action == "exit" and closing_position is not None:
+                exit_price = order.fill_price
+                pnl = None
+                if isinstance(exit_price, (int, float)):
+                    direction = 1.0 if closing_position.side == "long" else -1.0
+                    pnl = (
+                        (exit_price - closing_position.entry_price)
+                        * direction
+                        * closing_position.qty
+                    )
+                try:
+                    post_closeout(
+                        CloseoutEvent(
+                            instrument=closing_position.instrument,
+                            side=closing_position.side,
+                            strategy=sig.strategy or closing_position.strategy,
+                            qty=closing_position.qty,
+                            entry_price=closing_position.entry_price,
+                            exit_price=exit_price,
+                            pnl=pnl,
+                            entry_time=closing_position.entry_time,
+                            exit_time=order.fill_time or now_utc(),
+                            order_id=order.order_id,
+                            reason=derive_reason(
+                                exit_price=exit_price,
+                                stop=closing_position.stop,
+                                target=closing_position.target,
+                                side=closing_position.side,
+                            ),
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("execute: close-out webhook push failed", exc_info=True)
         if ctx.episodic is not None:
             ctx.episodic.record_decision(
                 timestamp=datetime.now(tz=timezone.utc).isoformat(),
@@ -118,6 +159,14 @@ def execute(state: TalimState) -> TalimState:
                 action="approve",
                 notes=f"order_id={order.order_id} order_side={order.side} qty={order.qty}",
             )
+            if (
+                sig.action == "exit"
+                and order.status != OrderStatus.REJECTED
+            ):
+                ctx.episodic.close_pending_entries(
+                    instrument=sig.instrument,
+                    side=sig.side,
+                )
     except Exception as e:  # noqa: BLE001
         logger.exception("execute: order placement failed: %s", e)
         update["last_action"] = f"execute-failed: {e}"
