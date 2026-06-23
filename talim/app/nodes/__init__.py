@@ -46,11 +46,13 @@ def execute(state: TalimState) -> TalimState:
     """
     from datetime import datetime, timezone
     from talim.app.execute_context import get_execute_context
-    from talim.connectors.discord.closeout import (
+    from talim.connectors.discord.position_events import (
         CloseoutEvent,
+        OpenEvent,
         derive_reason,
         now_utc,
         post_closeout,
+        post_open,
     )
     from talim.connectors.exchange.base import OrderStatus
     from talim.metrics import METRICS
@@ -141,6 +143,26 @@ def execute(state: TalimState) -> TalimState:
                     )
                 except Exception:  # noqa: BLE001
                     logger.warning("execute: close-out webhook push failed", exc_info=True)
+            elif sig.action != "exit":
+                atr_current = state.get("atr_current")
+                try:
+                    post_open(
+                        OpenEvent(
+                            instrument=sig.instrument,
+                            side=sig.side,
+                            strategy=sig.strategy,
+                            qty=order.qty,
+                            entry_price=order.fill_price if isinstance(order.fill_price, (int, float)) else sig.entry_price,
+                            stop=sig.stop,
+                            target=sig.target,
+                            regime=sig.regime_context,
+                            atr=atr_current if isinstance(atr_current, (int, float)) else None,
+                            entry_time=order.fill_time or now_utc(),
+                            order_id=order.order_id,
+                        )
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.warning("execute: open webhook push failed", exc_info=True)
         if ctx.episodic is not None:
             ctx.episodic.record_decision(
                 timestamp=datetime.now(tz=timezone.utc).isoformat(),

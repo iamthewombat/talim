@@ -149,7 +149,7 @@ def test_execute_exit_fires_closeout_push(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "talim.connectors.discord.closeout.post_closeout", _capture
+        "talim.connectors.discord.position_events.post_closeout", _capture
     )
 
     exchange = MockExchange(starting_balance=100_000.0)
@@ -241,7 +241,7 @@ def test_execute_exit_only_flips_matching_instrument_and_side(tmp_path):
 def test_execute_enter_does_not_fire_closeout(tmp_path, monkeypatch):
     captured: list = []
     monkeypatch.setattr(
-        "talim.connectors.discord.closeout.post_closeout",
+        "talim.connectors.discord.position_events.post_closeout",
         lambda event, **_: captured.append(event) or True,
     )
 
@@ -251,6 +251,55 @@ def test_execute_enter_does_not_fire_closeout(tmp_path, monkeypatch):
     configure_execute(exchange, episodic=mem)
 
     execute({"pending_signal": _signal()})
+
+    assert captured == []
+    mem.close()
+
+
+def test_execute_enter_fires_open_push(tmp_path, monkeypatch):
+    captured: list = []
+    monkeypatch.setattr(
+        "talim.connectors.discord.position_events.post_open",
+        lambda event, **_: captured.append(event) or True,
+    )
+
+    exchange = MockExchange(starting_balance=100_000.0)
+    exchange.set_fill_price("ES", 5400.0)
+    mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
+    configure_execute(exchange, episodic=mem)
+
+    execute({"pending_signal": _signal(), "atr_current": 12.5})
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.instrument == "ES"
+    assert event.side == "long"
+    assert event.strategy == "momentum-US500"
+    assert event.entry_price == 5400.0
+    assert event.stop == 5390.0
+    assert event.target == 5420.0
+    assert event.regime == "momentum"
+    assert event.atr == 12.5
+    mem.close()
+
+
+def test_execute_exit_does_not_fire_open_push(tmp_path, monkeypatch):
+    captured: list = []
+    monkeypatch.setattr(
+        "talim.connectors.discord.position_events.post_open",
+        lambda event, **_: captured.append(event) or True,
+    )
+
+    exchange = MockExchange(starting_balance=100_000.0)
+    exchange.set_fill_price("ES", 5400.0)
+    exchange.place_order("ES", "buy", 1.0, strategy="momentum-US500")
+    mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
+    configure_execute(exchange, episodic=mem)
+
+    execute({
+        "pending_signal": _signal(action="exit", side="long"),
+        "active_positions": exchange.get_positions(),
+    })
 
     assert captured == []
     mem.close()
