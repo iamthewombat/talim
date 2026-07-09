@@ -274,3 +274,69 @@ class TestForexcomExchange:
         exchange = _build_exchange(handler)
         balance = exchange.get_account_balance()
         assert balance == {"AUD": 48000.0}
+
+    def test_close_position_falls_back_to_opposite_market_order_when_close_route_missing(self):
+        new_orders: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/TradingApi/session":
+                return httpx.Response(200, json={"Session": "sess-1", "StatusCode": 1})
+            if request.url.path == "/TradingApi/order/openpositions":
+                return httpx.Response(
+                    200,
+                    json={
+                        "OpenPositions": [
+                            {
+                                "OrderId": 1001,
+                                "MarketId": 404709651,
+                                "Direction": "sell",
+                                "Quantity": 1.0,
+                                "Price": 9050.0,
+                                "LastChangedDateTimeUtc": "/Date(1776459600000)/",
+                            }
+                        ]
+                    },
+                )
+            if request.url.path == "/TradingApi/market/404709651/tickhistory":
+                return httpx.Response(
+                    200,
+                    json={
+                        "PriceTicks": [
+                            {
+                                "TickDate": "/Date(1776459600132)/",
+                                "Price": 9048.0,
+                                "Bid": 9047.5,
+                                "Offer": 9048.5,
+                                "AuditId": "audit-fallback",
+                            }
+                        ]
+                    },
+                )
+            if request.url.path == "/TradingApi/order/close":
+                return httpx.Response(405, text="")
+            if request.url.path == "/TradingApi/order/newtradeorder":
+                payload = json.loads(request.content)
+                new_orders.append(payload)
+                return httpx.Response(200, json={"OrderId": 2002, "Status": 1})
+            raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+        exchange = _build_exchange(handler)
+        order = exchange.close_position(
+            Position(
+                instrument="AU200.cash",
+                side="short",
+                qty=1.0,
+                entry_price=9050.0,
+                stop=9100.0,
+                target=9000.0,
+                strategy="momentum-AU200",
+                position_id="1001",
+            )
+        )
+
+        assert order.status == OrderStatus.FILLED
+        assert order.side == "buy"
+        assert order.qty == 1.0
+        assert new_orders[0]["Direction"] == "buy"
+        assert new_orders[0]["Quantity"] == 1.0
+        assert new_orders[0]["AuditId"] == "audit-fallback"

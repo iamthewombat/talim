@@ -245,7 +245,16 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
                     "AuditId": quote.audit_id,
                 },
             )
-            self._raise_for_status(response, "close FOREX.com open position")
+            try:
+                self._raise_for_status(response, "close FOREX.com open position")
+            except ForexcomDiscoveryError:
+                if response.status_code in {404, 405}:
+                    return self._close_position_with_opposite_market_order(
+                        position,
+                        close_qty=close_qty,
+                        strategy=strategy,
+                    )
+                raise
             last_payload = response.json()
             if not self._response_accepted(last_payload):
                 return Order(
@@ -279,6 +288,28 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
         )
         self._orders_cache[order_id] = order
         return order
+
+    def _close_position_with_opposite_market_order(
+        self,
+        position: Position,
+        *,
+        close_qty: float,
+        strategy: str = "",
+    ) -> Order:
+        """Close FIFO-stack accounts by submitting the exact opposite order.
+
+        Some FOREX.com/CityIndex demo hosts no longer expose the documented
+        /order/close route. On PositionMethodId=1/FIFO accounts, an opposite
+        market order for the open quantity closes the oldest matching lot.
+        """
+        close_side = "sell" if position.side == "long" else "buy"
+        return self.place_order(
+            instrument=position.instrument,
+            side=close_side,
+            qty=close_qty,
+            order_type="market",
+            strategy=strategy or position.strategy,
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         self.create_session()
