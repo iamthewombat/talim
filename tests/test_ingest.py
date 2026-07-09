@@ -16,6 +16,7 @@ import pandas as pd
 # Make scripts/ importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from _ingest_common import ingest_range, daterange  # noqa: E402
+import ingest_dukascopy_ticks as dukascopy  # noqa: E402
 
 
 def _fake_day_df(symbol: str, day: date) -> pd.DataFrame:
@@ -127,3 +128,45 @@ def test_tardis_main_smoke(tmp_path, monkeypatch):
     ])
     assert rc == 0
     assert (tmp_path / "BTCUSDT" / "2024-01-01.parquet").exists()
+
+
+def test_dukascopy_refuses_implicit_overwrite(tmp_path):
+    output = tmp_path / "5m-ask.parquet"
+    existing = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2024-01-01T00:00:00Z"]),
+        "price_type": ["ASK"],
+        "close": [1.0],
+    })
+    replacement = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2024-01-02T00:00:00Z"]),
+        "price_type": ["ASK"],
+        "close": [2.0],
+    })
+    existing.to_parquet(output, index=False)
+
+    try:
+        dukascopy._merge_existing(replacement, output, append=False, overwrite=False, price_type="ASK")
+    except ValueError as exc:
+        assert "refusing to overwrite existing Dukascopy parquet" in str(exc)
+    else:
+        raise AssertionError("expected implicit overwrite to be refused")
+
+
+def test_dukascopy_append_still_merges_and_deduplicates(tmp_path):
+    output = tmp_path / "5m-ask.parquet"
+    existing = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2024-01-01T00:00:00Z"]),
+        "price_type": ["ASK"],
+        "close": [1.0],
+    })
+    update = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z"]),
+        "price_type": ["ASK", "ASK"],
+        "close": [1.5, 2.0],
+    })
+    existing.to_parquet(output, index=False)
+
+    merged = dukascopy._merge_existing(update, output, append=True, overwrite=False, price_type="ASK")
+
+    assert len(merged) == 2
+    assert list(merged["close"]) == [1.5, 2.0]
