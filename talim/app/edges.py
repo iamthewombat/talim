@@ -18,6 +18,7 @@ from talim.app.state import TalimState
 
 
 ROUTER_BRANCHES = ("risk_check", "strategy_update", "backtest_run", "notify", "end")
+RISK_BRANCHES = ("execute", "hitl_interrupt", "notify", "end")
 
 
 def route_from_router(state: TalimState) -> str:
@@ -31,3 +32,18 @@ def route_from_router(state: TalimState) -> str:
     if state.get("last_user_message") is not None:
         return "notify"
     return "end"
+
+
+def route_after_risk(state: TalimState) -> str:
+    """Pick the next node after risk_check.
+
+    Entry signals still require HITL. Protective exit signals are already part
+    of the approved trade plan, so they must continue directly to execution;
+    pausing them for another approval turns a stop into a suggestion.
+    """
+    sig = state.get("pending_signal")
+    if sig is None:
+        return "notify" if state.get("pending_notification") is not None else "end"
+    if getattr(sig, "action", "enter") == "exit":
+        return "execute"
+    return "hitl_interrupt"

@@ -152,6 +152,10 @@ def risk_check(state: TalimState) -> TalimState:
         logger.info("risk_check: no pending_signal, passing through")
         return {}
 
+    if sig.action == "exit":
+        logger.info("risk_check: allowing protective exit %s %s", sig.side, sig.instrument)
+        return {}
+
     if state.get("halted"):
         logger.info("risk_check: halted — blocking %s %s", sig.strategy, sig.side)
         METRICS.inc("talim_risk_blocks_total")

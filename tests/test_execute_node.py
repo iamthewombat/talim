@@ -106,6 +106,7 @@ def test_execute_exit_signal_closes_long_with_sell(tmp_path):
     row = mem.query_decisions(instrument="ES")[0]
     assert row["signal_type"] == "exit"
     assert row["outcome"] == "closed"
+    assert row["pnl"] == pytest.approx(20.0)
     assert "order_side=sell" in row["notes"]
     mem.close()
 
@@ -126,6 +127,7 @@ def test_execute_exit_signal_closes_short_with_buy(tmp_path):
     assert update["active_positions"] == []
     assert exchange.get_positions() == []
     row = mem.query_decisions(instrument="ES")[0]
+    assert row["pnl"] == pytest.approx(10.0)
     assert "order_side=buy" in row["notes"]
     mem.close()
 
@@ -198,7 +200,9 @@ def test_execute_exit_flips_matching_pending_entry_to_closed(tmp_path):
     rows = mem.query_decisions(instrument="ES")
     by_type = {r["signal_type"]: r for r in rows}
     assert by_type["enter"]["outcome"] == "closed"
+    assert by_type["enter"]["pnl"] == pytest.approx(0.0)
     assert by_type["exit"]["outcome"] == "closed"
+    assert by_type["exit"]["pnl"] == pytest.approx(10.0)
     mem.close()
 
 

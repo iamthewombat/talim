@@ -2,7 +2,8 @@
 
 Topology:
 
-    cron_trigger ──▶ signal_scanner ──▶ router ──┬──▶ risk_check ──▶ hitl_interrupt ──▶ execute ──▶ END
+    cron_trigger ──▶ signal_scanner ──▶ router ──┬──▶ risk_check ──┬──▶ hitl_interrupt ──▶ execute ──▶ END
+                                                  │                 └──▶ execute ──▶ END  (protective exits)
                                                   ├──▶ strategy_update ──▶ notify ──▶ END
                                                   ├──▶ backtest_run ──▶ notify ──▶ END
                                                   ├──▶ notify ──▶ END
@@ -17,9 +18,9 @@ from langgraph.graph import StateGraph, END
 
 from talim.app.state import TalimState
 from talim.app import nodes
-from talim.app.edges import route_from_router  # re-exported for back-compat
+from talim.app.edges import route_after_risk, route_from_router  # re-exported for back-compat
 
-__all__ = ["build_graph", "route_from_router"]
+__all__ = ["build_graph", "route_from_router", "route_after_risk"]
 
 
 def build_graph(checkpointer=None):
@@ -74,8 +75,18 @@ def build_graph(checkpointer=None):
         },
     )
 
-    # Branch terminations
-    graph.add_edge("risk_check", "hitl_interrupt")
+    # Branch terminations. Entry signals pause at HITL; protective exit signals
+    # continue directly to execution once risk_check passes.
+    graph.add_conditional_edges(
+        "risk_check",
+        route_after_risk,
+        {
+            "execute": "execute",
+            "hitl_interrupt": "hitl_interrupt",
+            "notify": "notify",
+            "end": END,
+        },
+    )
     graph.add_conditional_edges(
         "hitl_interrupt",
         nodes.route_after_hitl,

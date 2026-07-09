@@ -71,6 +71,7 @@ def execute(state: TalimState) -> TalimState:
         return update
 
     closing_position = None
+    realised_pnl = 0.0
     try:
         if sig.action == "exit":
             position = _matching_position(sig, list(state.get("active_positions") or []))
@@ -120,6 +121,7 @@ def execute(state: TalimState) -> TalimState:
                         * direction
                         * closing_position.qty
                     )
+                    realised_pnl = float(pnl)
                 try:
                     post_closeout(
                         CloseoutEvent(
@@ -177,6 +179,7 @@ def execute(state: TalimState) -> TalimState:
                 outcome="closed" if sig.action == "exit" else "pending",
                 approved=True,
                 signal_type=sig.action,
+                pnl=realised_pnl,
                 atr_ratio=state.get("atr_ratio"),
                 action="approve",
                 notes=f"order_id={order.order_id} order_side={order.side} qty={order.qty}",
