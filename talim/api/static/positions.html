@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Talim Open Positions</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="positions-page">
+<header>
+  <h1>Open Positions</h1>
+  <div class="controls">
+    <a class="nav-link" href="/talim/dashboard/">Operator</a>
+    <button id="refresh-btn" type="button">Refresh</button>
+    <span class="sep">·</span>
+    <span id="auth-state" class="auth-locked">Checking auth…</span>
+    <button id="signin-btn" type="button">Sign in</button>
+    <span class="sep">·</span>
+    <span id="last-refresh" class="muted">never</span>
+  </div>
+</header>
+
+<main class="positions-main">
+  <section class="panel position-summary-panel">
+    <div class="panel-title-row">
+      <h2>Live summary</h2>
+      <span id="source-pill" class="pill">—</span>
+    </div>
+    <div id="summary-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section class="panel positions-list-panel">
+    <h2>Positions</h2>
+    <div id="positions-body" class="panel-body">Loading…</div>
+  </section>
+
+  <section class="panel position-chart-panel">
+    <div class="panel-title-row">
+      <h2>Position chart</h2>
+      <button id="fit-chart-btn" type="button">Fit</button>
+    </div>
+    <div id="chart-meta" class="muted">Select a position…</div>
+    <div id="position-chart" class="signal-chart" aria-label="Open position price chart"></div>
+    <div id="chart-warnings" class="panel-body"></div>
+  </section>
+
+  <section class="panel position-detail-panel">
+    <h2>Selected position</h2>
+    <div id="position-detail" class="panel-body">Select a position…</div>
+  </section>
+</main>
+
+<script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+<script src="positions.js"></script>
+</body>
+</html>
