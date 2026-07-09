@@ -101,6 +101,57 @@ function pnlClass(v) {
   return Number(v) >= 0 ? "pnl-pos" : "pnl-neg";
 }
 
+function extractQty(notes) {
+  const match = String(notes || "").match(/\bqty=([0-9.]+)/);
+  if (!match) return null;
+  const qty = Number(match[1]);
+  return Number.isFinite(qty) ? qty : null;
+}
+
+function buildTradeRows(decisions) {
+  const chronological = [...decisions].reverse();
+  const openEntries = [];
+  const pairedEntryIds = new Set();
+  const trades = [];
+
+  for (const r of chronological) {
+    if (r.signal_type === "enter") {
+      openEntries.push(r);
+      continue;
+    }
+    if (r.signal_type !== "exit") {
+      trades.push({ kind: "decision", row: r, timestamp: r.timestamp || r.created_at });
+      continue;
+    }
+
+    let matchIndex = -1;
+    for (let i = openEntries.length - 1; i >= 0; i--) {
+      const e = openEntries[i];
+      if (e.instrument === r.instrument && e.strategy === r.strategy && e.side === r.side && Number(e.id) < Number(r.id)) {
+        matchIndex = i;
+        break;
+      }
+    }
+
+    const entry = matchIndex >= 0 ? openEntries.splice(matchIndex, 1)[0] : null;
+    if (entry) pairedEntryIds.add(entry.id);
+    const qty = extractQty(r.notes) || (entry && extractQty(entry.notes)) || 1;
+    const direction = r.side === "short" ? -1 : 1;
+    const entryPrice = entry ? Number(entry.entry_price) : null;
+    const exitPrice = Number(r.entry_price);
+    const points = Number.isFinite(entryPrice) && Number.isFinite(exitPrice)
+      ? (exitPrice - entryPrice) * direction
+      : (Number.isFinite(Number(r.pnl)) && qty ? Number(r.pnl) / qty : null);
+    trades.push({ kind: "trade", entry, exit: r, qty, points, timestamp: r.timestamp || r.created_at });
+  }
+
+  for (const e of openEntries) {
+    if (!pairedEntryIds.has(e.id)) trades.push({ kind: "open", entry: e, timestamp: e.timestamp || e.created_at });
+  }
+
+  return trades.sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+}
+
 function fmtTs(value) {
   if (!value) return "—";
   try { return new Date(value).toISOString().replace("T", " ").replace("Z", " UTC"); }
@@ -480,23 +531,33 @@ async function refreshDecisions() {
       body.appendChild(el("div", { class: "muted", text: "no decisions match filters" }));
       return;
     }
+    const trades = buildTradeRows(rows);
     const table = el("table");
     const thead = el("thead");
     const head = el("tr");
-    for (const h of ["timestamp", "instrument", "strategy", "side", "approved", "outcome", "PnL", "notes"]) {
+    for (const h of ["timestamp", "instrument", "strategy", "side", "status", "entry → exit", "points", "PnL", "notes"]) {
       head.appendChild(el("th", { text: h }));
     }
     thead.appendChild(head);
     table.appendChild(thead);
     const tbody = el("tbody");
-    for (const r of rows) {
+    for (const t of trades) {
+      const r = t.exit || t.entry || t.row;
       const row = el("tr");
-      row.appendChild(el("td", { text: r.timestamp || "—" }));
+      const entryPrice = t.entry ? t.entry.entry_price : (t.kind === "open" ? r.entry_price : null);
+      const exitPrice = t.exit ? t.exit.entry_price : null;
+      const priceText = t.kind === "trade"
+        ? `${fmtNum(entryPrice, 2)} → ${fmtNum(exitPrice, 2)}`
+        : (t.kind === "open" ? `${fmtNum(entryPrice, 2)} → open` : fmtNum(r.entry_price, 2));
+      const status = t.kind === "trade" ? "closed" : (r.outcome || r.signal_type || "—");
+      const points = t.kind === "trade" ? t.points : null;
+      row.appendChild(el("td", { text: r.timestamp || r.created_at || "—" }));
       row.appendChild(el("td", { text: r.instrument || "—" }));
       row.appendChild(el("td", { text: r.strategy || "—" }));
       row.appendChild(el("td", { text: r.side || "—" }));
-      row.appendChild(el("td", { text: r.approved ? "yes" : "no" }));
-      row.appendChild(el("td", { text: r.outcome || "—" }));
+      row.appendChild(el("td", { text: status }));
+      row.appendChild(el("td", { text: priceText }));
+      row.appendChild(el("td", { text: points == null ? "—" : fmtSigned(points), class: pnlClass(points) }));
       row.appendChild(el("td", { text: fmtSigned(r.pnl), class: pnlClass(r.pnl) }));
       row.appendChild(el("td", { text: (r.notes || r.rationale || "").slice(0, 80) }));
       tbody.appendChild(row);
