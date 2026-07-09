@@ -15,6 +15,43 @@
 
 ---
 
+## Research / Backtesting Task Tracker
+
+Research and backtesting TODOs that are not yet formal Talim work packages are tracked in:
+
+- [`/home/wombat/openclaw-app/BACKTESTING_ROADMAP.md`](/home/wombat/openclaw-app/BACKTESTING_ROADMAP.md)
+
+Use that roadmap for messy/open-ended items such as finding more historical backtesting data, documenting Justin's discretionary strategy, adding/testing indicators, expanding assets, and defining comparison rules. Promote items into numbered WPs here once they become concrete implementation work.
+
+Current active roadmap items:
+
+- `BR-01` / `WP-74` — complete deeper AU200/US500 historical data coverage and gap audit.
+- `BR-02` — document Justin's discretionary trading style.
+- `BR-03` — define the next indicator research batch.
+- `BR-04` — establish baseline comparison rules.
+- `BR-05` — standardise realistic fees/spread/slippage assumptions.
+
+---
+
+## Reliability / Operational Safety Tracker
+
+Off-host backups, safe-write code patterns, HITL gates for irreplaceable data, and resumption-protocol work are tracked in:
+
+- [`/home/wombat/openclaw-app/RELIABILITY_ROADMAP.md`](/home/wombat/openclaw-app/RELIABILITY_ROADMAP.md)
+
+Use that roadmap for anything whose value is "we don't lose work / can recover from mistakes." Originated from the 2026-05-25 AU200.proxy ASK parquet incident. Promote items into numbered WPs here once they become concrete Talim implementation work.
+
+Current active roadmap items:
+
+- `RR-01` — decide off-host backup destination (in progress, blocks the rest of Phase 1).
+- `RR-02` — draft `RECOVERY.md` data classification.
+- `RR-03` — define backup path allowlist + excludes.
+- `RR-04` — install restic on host.
+- `RR-05` → `RR-07` — init restic repo, wire nightly backup + notify, test-restore (blocked chain on RR-01).
+- `RR-08` — re-pull AU200.proxy ASK 2014-2026 (blocked by RR-07 — no multi-day pull without a verified safety net).
+
+---
+
 ## Phase 1: Foundation (sequential)
 
 | WP | Name | Status | Session Date | Notes |
