@@ -7,7 +7,7 @@ We never hit the network — both CLIs are tested by injecting a fake
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -170,3 +170,59 @@ def test_dukascopy_append_still_merges_and_deduplicates(tmp_path):
 
     assert len(merged) == 2
     assert list(merged["close"]) == [1.5, 2.0]
+
+
+def test_dukascopy_raw_cache_avoids_network(tmp_path, monkeypatch):
+    hour = datetime(2024, 1, 2, 3, tzinfo=UTC)
+    cache_dir = tmp_path / "cache"
+    dukascopy._write_cached_hour(cache_dir, "USA500IDXUSD", hour, b"cached-bi5")
+
+    def fail_fetch(*args, **kwargs):
+        raise AssertionError("network fetch should not be called for cached hour")
+
+    monkeypatch.setattr(dukascopy, "_fetch_hour", fail_fetch)
+
+    result = dukascopy._fetch_raw_hour(
+        "USA500IDXUSD",
+        hour,
+        timeout_seconds=1,
+        cache_dir=cache_dir,
+        max_retries=3,
+        backoff_base_seconds=0,
+        sleep=False,
+    )
+
+    assert result.payload == b"cached-bi5"
+    assert result.source == "cache"
+
+
+def test_dukascopy_market_closure_filter_is_conservative():
+    saturday = datetime(2024, 1, 6, 12, tzinfo=UTC)
+    sunday_before_open = datetime(2024, 1, 7, 12, tzinfo=UTC)
+    monday_session = datetime(2024, 1, 8, 12, tzinfo=UTC)
+
+    assert dukascopy._is_market_closure_hour("USA500IDXUSD", saturday)
+    assert dukascopy._is_market_closure_hour("USA500IDXUSD", sunday_before_open)
+    assert not dukascopy._is_market_closure_hour("USA500IDXUSD", monday_session)
+
+
+def test_dukascopy_parser_has_pull_reliability_knobs():
+    args = dukascopy._build_parser().parse_args([
+        "--symbol",
+        "USA500IDXUSD",
+        "--start",
+        "2024-01-01",
+        "--end",
+        "2024-01-02",
+        "--workers",
+        "4",
+        "--max-fetch-retries",
+        "5",
+        "--raw-cache-dir",
+        "custom-cache",
+    ])
+
+    assert args.workers == 4
+    assert args.max_fetch_retries == 5
+    assert args.raw_cache_dir == "custom-cache"
+    assert not args.no_raw_cache
