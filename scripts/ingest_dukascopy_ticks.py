@@ -15,16 +15,18 @@ Months in the URL are zero-based. Tick records are 20 bytes:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import lzma
+import random
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
+import httpx
 import pandas as pd
 
 DUKASCOPY_BASE_URL = "https://datafeed.dukascopy.com/datafeed"
@@ -45,6 +47,7 @@ DEFAULT_SYMBOL_MAP = {
     "USA500IDXUSD": "US500.proxy",
     "AUSIDXAUD": "AU200.proxy",
 }
+_THREAD_LOCAL = threading.local()
 
 
 @dataclass(frozen=True)
@@ -55,12 +58,27 @@ class DownloadStats:
     empty_hours: int = 0
     decode_errors: int = 0
     ticks: int = 0
+    cache_hits: int = 0
+    http_downloads: int = 0
+    closure_hours: int = 0
+    retry_attempts: int = 0
+    retry_recovered_hours: int = 0
 
     def add(self, **changes: int) -> "DownloadStats":
         values = self.__dict__.copy()
         for key, value in changes.items():
             values[key] += value
         return DownloadStats(**values)
+
+
+@dataclass(frozen=True)
+class RawHourResult:
+    hour: datetime
+    payload: bytes | None
+    source: str
+    attempts: int = 0
+    recovered: bool = False
+    error: str | None = None
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -82,6 +100,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", default="dukascopy", help="Source label to write into Parquet")
     parser.add_argument("--sleep-seconds", type=float, default=0.05, help="Delay between hourly requests")
     parser.add_argument("--timeout-seconds", type=float, default=15.0, help="HTTP timeout per hourly file")
+    parser.add_argument("--max-fetch-retries", type=int, default=3, help="Retries for transient hourly fetch failures")
+    parser.add_argument("--backoff-base-seconds", type=float, default=2.0, help="Base delay for exponential fetch backoff")
+    parser.add_argument("--workers", type=int, default=1, help="Bounded hourly fetch/decode workers")
+    parser.add_argument(
+        "--raw-cache-dir",
+        default="data/cache/dukascopy/bi5",
+        help="Directory for raw .bi5 cache files",
+    )
+    parser.add_argument("--no-raw-cache", action="store_true", help="Disable raw .bi5 disk cache")
+    parser.add_argument(
+        "--include-market-closures",
+        action="store_true",
+        help="Fetch obvious closure hours instead of marking them as skipped",
+    )
     parser.add_argument(
         "--output",
         help="Output parquet path. Defaults to data/backtest/dukascopy/<instrument>/<timeframe>.parquet",
@@ -129,11 +161,56 @@ def _hour_cursor(start: datetime, end: datetime):
         cursor += timedelta(hours=1)
 
 
+def _is_market_closure_hour(symbol: str, hour: datetime) -> bool:
+    """Conservative closure filter for obvious dead Dukascopy index-CFD hours."""
+    symbol_upper = symbol.upper()
+    weekday = hour.weekday()
+    if weekday == 5:
+        return True
+    if weekday == 6 and hour.hour < 18:
+        return True
+    if weekday == 4 and hour.hour >= 22:
+        return True
+    if "IDX" in symbol_upper and (hour.month, hour.day) in {(1, 1), (12, 25)}:
+        return True
+    return False
+
+
 def _dukascopy_url(symbol: str, hour: datetime) -> str:
     return (
         f"{DUKASCOPY_BASE_URL}/{symbol}/"
         f"{hour.year:04d}/{hour.month - 1:02d}/{hour.day:02d}/{hour.hour:02d}h_ticks.bi5"
     )
+
+
+def _raw_cache_path(cache_dir: Path, symbol: str, hour: datetime) -> Path:
+    return (
+        cache_dir
+        / symbol.upper()
+        / f"{hour.year:04d}"
+        / f"{hour.month:02d}"
+        / f"{hour.day:02d}"
+        / f"{hour.hour:02d}h_ticks.bi5"
+    )
+
+
+def _read_cached_hour(cache_dir: Path | None, symbol: str, hour: datetime) -> bytes | None:
+    if cache_dir is None:
+        return None
+    path = _raw_cache_path(cache_dir, symbol, hour)
+    if not path.exists():
+        return None
+    return path.read_bytes()
+
+
+def _write_cached_hour(cache_dir: Path | None, symbol: str, hour: datetime, payload: bytes) -> None:
+    if cache_dir is None or not payload:
+        return
+    path = _raw_cache_path(cache_dir, symbol, hour)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp-{random.randrange(1_000_000_000):09d}")
+    tmp.write_bytes(payload)
+    tmp.replace(path)
 
 
 def _price_scale(symbol: str, value: str) -> int:
@@ -149,31 +226,82 @@ def _price_scale(symbol: str, value: str) -> int:
     return 100000
 
 
-def _fetch_hour(symbol: str, hour: datetime, *, timeout_seconds: float) -> bytes | None:
+def _fetch_hour(
+    symbol: str,
+    hour: datetime,
+    *,
+    timeout_seconds: float,
+    client: httpx.Client | None = None,
+) -> bytes | None:
     # A normal GET can hang from some environments even when the file is tiny.
     # Requesting an explicit byte range makes Dukascopy return a bounded 206
     # response with Content-Length while still yielding the complete file.
-    request = Request(
-        _dukascopy_url(symbol, hour),
-        headers={
-            "User-Agent": "talim-dukascopy-ingest/1.0",
-            "Accept": "*/*",
-            "Connection": "close",
-            "Range": "bytes=0-",
-        },
-    )
+    headers = {
+        "User-Agent": "talim-dukascopy-ingest/1.0",
+        "Accept": "*/*",
+        "Range": "bytes=0-",
+    }
+    close_client = client is None
+    if client is None:
+        client = httpx.Client(timeout=timeout_seconds)
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            payload = response.read()
-    except HTTPError as exc:
-        if exc.code == 404:
+        response = client.get(_dukascopy_url(symbol, hour), headers=headers, timeout=timeout_seconds)
+        if response.status_code == 404:
             return None
-        raise
-    except URLError:
-        raise
+        response.raise_for_status()
+        payload = response.content
+    finally:
+        if close_client:
+            client.close()
     if not payload:
         return b""
     return payload
+
+
+def _fetch_raw_hour(
+    symbol: str,
+    hour: datetime,
+    *,
+    timeout_seconds: float,
+    cache_dir: Path | None,
+    max_retries: int,
+    backoff_base_seconds: float,
+    client: httpx.Client | None = None,
+    sleep: bool = True,
+) -> RawHourResult:
+    cached = _read_cached_hour(cache_dir, symbol, hour)
+    if cached is not None:
+        return RawHourResult(hour=hour, payload=cached, source="cache")
+
+    attempts = 0
+    last_error: str | None = None
+    transient_statuses = {408, 429, 500, 502, 503, 504}
+    total_attempts = max(1, max_retries + 1)
+    for attempt in range(1, total_attempts + 1):
+        attempts = attempt
+        try:
+            payload = _fetch_hour(symbol, hour, timeout_seconds=timeout_seconds, client=client)
+            if payload is not None:
+                _write_cached_hour(cache_dir, symbol, hour, payload)
+            return RawHourResult(
+                hour=hour,
+                payload=payload,
+                source="http",
+                attempts=attempts,
+                recovered=attempts > 1,
+            )
+        except httpx.HTTPStatusError as exc:
+            last_error = str(exc)
+            if exc.response.status_code not in transient_statuses or attempt == total_attempts:
+                break
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last_error = str(exc)
+            if attempt == total_attempts:
+                break
+        if sleep:
+            delay = backoff_base_seconds * (2 ** (attempt - 1))
+            time.sleep(delay + random.uniform(0, min(1.0, backoff_base_seconds)))
+    return RawHourResult(hour=hour, payload=None, source="error", attempts=attempts, error=last_error)
 
 
 def _decode_ticks(payload: bytes, *, hour: datetime, scale: int, price_type: str) -> pd.DataFrame:
@@ -282,6 +410,7 @@ def _load_state(path: Path, *, args: argparse.Namespace, instrument: str) -> dic
     state.setdefault("completed_hours", [])
     state.setdefault("missing_hours", [])
     state.setdefault("empty_hours", [])
+    state.setdefault("closure_hours", [])
     state.setdefault("decode_error_hours", [])
     state.setdefault("fetch_error_hours", {})
     return state
@@ -303,8 +432,41 @@ def _append_unique(state: dict, field: str, value: str) -> None:
     state[field] = sorted(values)
 
 
-def main() -> int:
-    args = _build_parser().parse_args()
+def _remove_problem_hour(state: dict, hour_key: str) -> None:
+    for field in ("missing_hours", "empty_hours", "decode_error_hours", "closure_hours"):
+        if hour_key in state.setdefault(field, []):
+            state[field] = sorted(set(state[field]) - {hour_key})
+    state.setdefault("fetch_error_hours", {}).pop(hour_key, None)
+
+
+def _thread_client(timeout_seconds: float) -> httpx.Client:
+    client = getattr(_THREAD_LOCAL, "dukascopy_client", None)
+    if client is None:
+        client = httpx.Client(timeout=timeout_seconds)
+        _THREAD_LOCAL.dukascopy_client = client
+    return client
+
+
+def _fetch_raw_hour_for_pool(
+    symbol: str,
+    hour: datetime,
+    timeout_seconds: float,
+    cache_dir: Path | None,
+    max_retries: int,
+    backoff_base_seconds: float,
+) -> RawHourResult:
+    return _fetch_raw_hour(
+        symbol,
+        hour,
+        timeout_seconds=timeout_seconds,
+        cache_dir=cache_dir,
+        max_retries=max_retries,
+        backoff_base_seconds=backoff_base_seconds,
+        client=_thread_client(timeout_seconds),
+    )
+
+
+def run_ingest(args: argparse.Namespace) -> int:
     start = _parse_utc(args.start)
     end = _parse_utc(args.end)
     if start >= end:
@@ -335,6 +497,7 @@ def main() -> int:
     scale = _price_scale(args.symbol, args.price_scale)
     state = _load_state(state_path, args=args, instrument=instrument)
     completed_before = set(state.get("completed_hours", []))
+    cache_dir = None if args.no_raw_cache else Path(args.raw_cache_dir)
 
     tick_frames: list[pd.DataFrame] = []
     stats = DownloadStats()
@@ -352,54 +515,109 @@ def main() -> int:
         pending_state_writes = 0
 
     try:
+        hours: list[datetime] = []
         for hour in _hour_cursor(start, end):
             hour_key = _state_key(hour)
             if not args.no_resume and hour_key in completed_before:
                 continue
+            if not args.include_market_closures and _is_market_closure_hour(args.symbol, hour):
+                _append_unique(state, "closure_hours", hour_key)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(closure_hours=1)
+                continue
+            hours.append(hour)
+
+        def handle_result(result: RawHourResult) -> None:
+            nonlocal stats, pending_state_writes
+            hour = result.hour
             stats = stats.add(attempted_hours=1)
-            try:
-                payload = _fetch_hour(args.symbol, hour, timeout_seconds=args.timeout_seconds)
-            except Exception as exc:  # network/provider errors should not corrupt partial imports
-                print(f"{hour.isoformat()} fetch error: {exc}")
-                state.setdefault("fetch_error_hours", {})[hour_key] = str(exc)
+            hour_key = _state_key(hour)
+            stats = stats.add(retry_attempts=max(0, result.attempts - 1))
+            if result.recovered:
+                stats = stats.add(retry_recovered_hours=1)
+            if result.source == "cache":
+                stats = stats.add(cache_hits=1)
+            elif result.source == "http" and result.payload is not None:
+                stats = stats.add(http_downloads=1)
+            if result.source == "error":
+                print(f"{hour.isoformat()} fetch error: {result.error}")
+                state.setdefault("fetch_error_hours", {})[hour_key] = result.error or "fetch failed"
                 pending_state_writes += 1
                 _flush_state()
                 stats = stats.add(missing_hours=1)
-                continue
+                return
+            payload = result.payload
             if payload is None:
+                _remove_problem_hour(state, hour_key)
                 _append_unique(state, "missing_hours", hour_key)
                 pending_state_writes += 1
                 _flush_state()
                 stats = stats.add(missing_hours=1)
-                continue
+                return
             if payload == b"":
+                _remove_problem_hour(state, hour_key)
                 _append_unique(state, "empty_hours", hour_key)
                 pending_state_writes += 1
                 _flush_state()
                 stats = stats.add(empty_hours=1)
-                continue
+                return
             try:
                 ticks = _decode_ticks(payload, hour=hour, scale=scale, price_type=args.price_type)
             except Exception as exc:
                 print(f"{hour.isoformat()} decode error: {exc}")
+                _remove_problem_hour(state, hour_key)
                 _append_unique(state, "decode_error_hours", hour_key)
                 pending_state_writes += 1
                 _flush_state()
                 stats = stats.add(decode_errors=1)
-                continue
+                return
             if ticks.empty:
+                _remove_problem_hour(state, hour_key)
                 _append_unique(state, "empty_hours", hour_key)
                 pending_state_writes += 1
                 _flush_state()
                 stats = stats.add(empty_hours=1)
-                continue
+                return
             tick_frames.append(ticks)
+            _remove_problem_hour(state, hour_key)
             _append_unique(state, "completed_hours", hour_key)
             pending_state_writes += 1
             _flush_state()
             stats = stats.add(downloaded_hours=1, ticks=len(ticks))
-            if args.sleep_seconds > 0:
-                time.sleep(args.sleep_seconds)
+
+        workers = max(1, int(args.workers))
+        if workers == 1:
+            with httpx.Client(timeout=args.timeout_seconds) as client:
+                for hour in hours:
+                    result = _fetch_raw_hour(
+                        args.symbol,
+                        hour,
+                        timeout_seconds=args.timeout_seconds,
+                        cache_dir=cache_dir,
+                        max_retries=args.max_fetch_retries,
+                        backoff_base_seconds=args.backoff_base_seconds,
+                        client=client,
+                    )
+                    handle_result(result)
+                    if args.sleep_seconds > 0:
+                        time.sleep(args.sleep_seconds)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(
+                        _fetch_raw_hour_for_pool,
+                        args.symbol,
+                        hour,
+                        args.timeout_seconds,
+                        cache_dir,
+                        args.max_fetch_retries,
+                        args.backoff_base_seconds,
+                    )
+                    for hour in hours
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    handle_result(future.result())
     finally:
         _flush_state(force=True)
 
@@ -432,6 +650,16 @@ def main() -> int:
         )
     bars = _merge_existing(bars, output, append=args.append, overwrite=args.overwrite, price_type=args.price_type)
     bars.to_parquet(output, index=False)
+    state["last_run_stats"] = stats.__dict__
+    state["last_run_window"] = {
+        "start_utc": start.isoformat(),
+        "end_utc_exclusive": end.isoformat(),
+        "price_type": args.price_type,
+        "timeframe": args.timeframe,
+        "workers": workers,
+        "raw_cache_dir": None if cache_dir is None else str(cache_dir),
+    }
+    _write_state(state_path, state)
     _write_manifest(manifest, args=args, instrument=instrument, start=start, end=end, output=output, stats=stats, rows=len(bars), scale=scale)
 
     if bars.empty:
@@ -441,8 +669,18 @@ def main() -> int:
             f"wrote {len(bars)} bars to {output} "
             f"({bars['timestamp'].min()} .. {bars['timestamp'].max()}); stats={stats}"
         )
+    print(
+        "diagnostics: "
+        f"cache_hits={stats.cache_hits} http_downloads={stats.http_downloads} "
+        f"closure_hours={stats.closure_hours} retry_attempts={stats.retry_attempts} "
+        f"retry_recovered_hours={stats.retry_recovered_hours}"
+    )
     print(f"wrote manifest to {manifest}")
     return 0
+
+
+def main() -> int:
+    return run_ingest(_build_parser().parse_args())
 
 
 if __name__ == "__main__":
