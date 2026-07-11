@@ -253,6 +253,24 @@ class TestRiskCheckNode:
         update = risk_check({"pending_signal": _signal(), "active_positions": []})
         assert update == {}
 
+    def test_exit_signal_bypasses_entry_risk_blocks(self):
+        exit_signal = Signal(
+            instrument="ES",
+            strategy="momentum-US500",
+            side="long",
+            entry_price=5380.0,
+            stop=0.0,
+            target=0.0,
+            rationale="stop hit",
+            regime_context="",
+            action="exit",
+        )
+        configure_risk_rules(RiskRules(block_on_existing_same_instrument=True))
+
+        update = risk_check({"pending_signal": exit_signal, "active_positions": [_position()]})
+
+        assert update == {}
+
     def test_node_reads_daily_pnl_from_state(self):
         # WP-20: risk_check node must read state["daily_pnl"] for the
         # drawdown rule rather than assuming 0.

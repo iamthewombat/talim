@@ -10,6 +10,7 @@
 <header>
   <h1>Talim Operator</h1>
   <div class="controls">
+    <a class="nav-link" href="/talim/dashboard/positions.html">Open Positions</a>
     <a class="nav-link" href="/talim/dashboard/backtests.html">Backtests</a>
     <button id="refresh-btn" type="button">Refresh</button>
     <span id="status-dot" class="dot unknown" title="Halt status"></span>
@@ -43,7 +44,10 @@
   </section>
 
   <section id="panel-positions" class="panel">
-    <h2>Open Positions</h2>
+    <div class="panel-title-row">
+      <h2>Open Positions</h2>
+      <a class="nav-link" href="/talim/dashboard/positions.html">Open page</a>
+    </div>
     <div id="positions-body" class="panel-body">Loading…</div>
   </section>
 

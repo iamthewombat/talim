@@ -331,3 +331,75 @@ class TestOperatorSignalChartEndpoint:
         )
 
         assert r.status_code == 404
+
+
+class TestOperatorPositionsDashboardEndpoint:
+    def test_requires_secret(self, client):
+        r = client.get("/talim/operator/positions/dashboard")
+        assert r.status_code == 401
+
+    def test_returns_enriched_positions_from_runtime(self, client):
+        class FakeRuntime:
+            def operator_positions_dashboard(self):
+                return {
+                    "summary": {"position_count": 1, "mark_open_pnl": -12.5},
+                    "positions": [{"position_id": "P1", "instrument": "US500.cash"}],
+                }
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.get(
+            "/talim/operator/positions/dashboard",
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["summary"]["mark_open_pnl"] == -12.5
+        assert r.json()["positions"][0]["position_id"] == "P1"
+
+
+class TestOperatorPositionChartEndpoint:
+    def test_requires_secret(self, client):
+        r = client.get("/talim/operator/positions/P1/chart")
+        assert r.status_code == 401
+
+    def test_returns_chart_from_runtime(self, client):
+        calls = []
+
+        class FakeRuntime:
+            def operator_position_chart(self, *, position_id, bars=240):
+                calls.append((position_id, bars))
+                return {
+                    "position_id": position_id,
+                    "status": "ok",
+                    "source": "broker_recent",
+                    "timeframe": "5m",
+                    "requested": {"bars": bars},
+                    "position": {"position_id": position_id, "instrument": "US500.cash"},
+                    "candles": [],
+                    "indicators": {},
+                    "levels": {},
+                    "warnings": [],
+                }
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.get(
+            "/talim/operator/positions/P1/chart?bars=120",
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["requested"] == {"bars": 120}
+        assert calls == [("P1", 120)]
+
+    def test_returns_404_for_closed_position(self, client):
+        class FakeRuntime:
+            def operator_position_chart(self, *, position_id, bars=240):
+                return None
+
+        client.app.state.talim_runtime = FakeRuntime()
+        r = client.get(
+            "/talim/operator/positions/P1/chart",
+            headers={"X-Talim-Secret": SECRET},
+        )
+
+        assert r.status_code == 404

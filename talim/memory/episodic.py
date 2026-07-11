@@ -119,7 +119,7 @@ class EpisodicMemory:
         regime: str = "",
         rationale: str = "",
         outcome: str = "pending",
-        pnl: float = 0.0,
+        pnl: float | None = 0.0,
         approved: bool = True,
         signal_type: str = "entry",
         atr_ratio: float | None = None,
@@ -150,6 +150,7 @@ class EpisodicMemory:
         strategy: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        outcome: str | None = None,
     ) -> list[dict]:
         """Query decisions with optional filters."""
         clauses = []
@@ -161,6 +162,9 @@ class EpisodicMemory:
         if strategy is not None:
             clauses.append("strategy = ?")
             params.append(strategy)
+        if outcome is not None:
+            clauses.append("outcome = ?")
+            params.append(outcome)
         if date_from is not None:
             clauses.append("timestamp >= ?")
             params.append(date_from)
@@ -173,6 +177,35 @@ class EpisodicMemory:
             f"SELECT * FROM decisions WHERE {where} ORDER BY timestamp", params
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def close_pending_entries(
+        self, *, instrument: str, side: str, strategy: str | None = None
+    ) -> int:
+        """Mark pending `enter` decisions for an instrument+side as closed.
+
+        Called by the execute node after a successful exit so the entry row's
+        outcome reflects reality and the reconcile node stops flagging it as
+        a divergence. Pass `strategy` to avoid closing another strategy's
+        pending entries on the same instrument+side; stacked entries from the
+        matching strategy are all closed because the broker close is a full
+        position close. Returns the number of rows updated.
+        """
+        clauses = [
+            "instrument = ?",
+            "side = ?",
+            "signal_type = 'enter'",
+            "outcome = 'pending'",
+        ]
+        params: list = [instrument, side]
+        if strategy:
+            clauses.append("strategy = ?")
+            params.append(strategy)
+        cur = self._conn.execute(
+            f"UPDATE decisions SET outcome = 'closed' WHERE {' AND '.join(clauses)}",
+            params,
+        )
+        self._conn.commit()
+        return cur.rowcount or 0
 
     def get_stats(self, strategy: str) -> dict:
         """Get aggregate stats for a strategy."""

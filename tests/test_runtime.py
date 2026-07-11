@@ -246,3 +246,54 @@ def test_operator_signal_chart_reports_unavailable_when_no_bars(tmp_path):
     assert chart["status"] == "data_unavailable"
     assert chart["candles"] == []
     assert chart["warnings"]
+
+
+def test_seed_state_overlays_pending_decision_exit_levels(tmp_path):
+    class FakeExchange:
+        def get_positions(self):
+            from talim.models.position import Position
+            return [Position(
+                instrument="US500.cash",
+                side="short",
+                qty=1.0,
+                entry_price=7357.3,
+                stop=0.0,
+                target=0.0,
+                strategy="",
+                position_id="1016975723",
+            )]
+
+        def get_account_balance(self):
+            return {"AUD": 50_000.0}
+
+    class FakePnlTracker:
+        def refresh(self, exchange):
+            raise RuntimeError("not needed")
+
+    runtime = Runtime(
+        config=RuntimeConfig(pricefeed_timeframe="5m", strategies=("mean-reversion-US500",)),
+        exchange=FakeExchange(),
+        price_feed=object(),
+        strategies=[],
+        episodic=EpisodicMemory(str(tmp_path / "episodic.db")),
+        checkpointer=None,
+        pnl_tracker=FakePnlTracker(),
+        backtest_history=object(),
+    )
+    runtime.episodic.record_decision(
+        timestamp="2026-05-20T05:36:19+00:00",
+        instrument="US500.cash",
+        strategy="mean-reversion-US500",
+        side="short",
+        entry_price=7356.73,
+        stop=7366.5,
+        target=7349.4,
+        outcome="pending",
+    )
+
+    state = runtime.seed_state()
+    pos = state["active_positions"][0]
+
+    assert pos.stop == 7366.5
+    assert pos.target == 7349.4
+    assert pos.strategy == "mean-reversion-US500"

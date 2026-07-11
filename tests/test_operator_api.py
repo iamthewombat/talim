@@ -198,3 +198,20 @@ def test_sync_reports_reconciliation_repairs(operator_client):
 
     snapshot = runtime.snapshot(thread_id="op-repair")
     assert "missing_in_memory" in snapshot.values["pending_notification"]
+
+
+def test_sync_clears_stale_reconciliation_notification(operator_client):
+    client, runtime = operator_client
+    runtime.exchange.set_fill_price("ES", 5000)
+    runtime.exchange.place_order("ES", "buy", 1, strategy="manual")
+    client.post("/talim/sync?thread_id=op-clear-repair", headers=_auth())
+    runtime.exchange.place_order("ES", "sell", 1, strategy="manual")
+
+    response = client.post("/talim/sync?thread_id=op-clear-repair", headers=_auth())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["repair_count"] == 0
+    assert body["pending_notification"] is None
+    snapshot = runtime.snapshot(thread_id="op-clear-repair")
+    assert snapshot.values["pending_notification"] is None

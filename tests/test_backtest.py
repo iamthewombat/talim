@@ -240,6 +240,33 @@ class TestDataLoader:
         with pytest.raises(ValueError, match="empty"):
             load_ohlcv(tmp_path, "US500.cash", timeframe="5m")
 
+    def test_multi_price_type_file_defaults_to_mid_rows(self, tmp_path):
+        base = _sine_df(10, freq="1h")
+        frames = []
+        for price_type, offset in [("BID", -1.0), ("MID", 0.0), ("ASK", 1.0)]:
+            frame = base.copy()
+            frame["price_type"] = price_type
+            frame["close"] = frame["close"] + offset
+            frames.append(frame)
+        sub = tmp_path / "AU200.proxy"
+        sub.mkdir()
+        pd.concat(frames, ignore_index=True).to_parquet(sub / "1h.parquet")
+
+        loaded = load_ohlcv(tmp_path, "AU200.proxy", timeframe="1h")
+
+        assert len(loaded) == len(base)
+        assert set(loaded["price_type"]) == {"MID"}
+        assert loaded["timestamp"].is_unique
+
+    def test_duplicate_timestamps_raise_after_price_type_filtering(self, tmp_path):
+        df = pd.concat([_sine_df(5, freq="1h"), _sine_df(5, freq="1h")], ignore_index=True)
+        sub = tmp_path / "US500.cash"
+        sub.mkdir()
+        df.to_parquet(sub / "1h.parquet")
+
+        with pytest.raises(ValueError, match="duplicate timestamp"):
+            load_ohlcv(tmp_path, "US500.cash", timeframe="1h")
+
 
 # ---------------------------------------------------------------------------
 # Node + graph integration

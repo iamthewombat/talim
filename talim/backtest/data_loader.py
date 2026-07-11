@@ -24,7 +24,21 @@ def _validate(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"OHLCV frame missing columns: {sorted(missing)}")
     df = df.copy()
+    if "price_type" in df.columns:
+        price_types = {str(value).upper() for value in df["price_type"].dropna().unique()}
+        if len(price_types) > 1:
+            if "MID" not in price_types:
+                raise ValueError(
+                    "OHLCV frame contains multiple price_type values but no MID rows "
+                    f"to use for signal backtests: {sorted(price_types)}"
+                )
+            df = df[df["price_type"].astype(str).str.upper() == "MID"].copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if df["timestamp"].duplicated().any():
+        duplicate_count = int(df["timestamp"].duplicated().sum())
+        raise ValueError(
+            f"OHLCV frame contains {duplicate_count} duplicate timestamp rows after price_type filtering"
+        )
     return df.sort_values("timestamp").reset_index(drop=True)
 
 

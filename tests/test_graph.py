@@ -1,6 +1,6 @@
 """Integration tests for the LangGraph skeleton."""
 
-from talim.app.graph import build_graph, route_from_router
+from talim.app.graph import build_graph, route_after_risk, route_from_router
 from talim.app.entrypoints import cron_trigger, bridge_message
 from talim.app.checkpointer import create_checkpointer
 from talim.models.signal import Signal
@@ -56,6 +56,25 @@ class TestRouterBranching:
             "regime_changed": True,
         }
         assert route_from_router(state) == "risk_check"
+
+    def test_entry_signal_routes_to_hitl_after_risk(self):
+        state = {"pending_signal": Signal(
+            instrument="ES", strategy="momentum-US500", side="long",
+            entry_price=5400.0, stop=5380.0, target=5440.0,
+            rationale="test", regime_context="momentum",
+        )}
+        assert route_after_risk(state) == "hitl_interrupt"
+
+    def test_exit_signal_routes_to_execute_after_risk(self):
+        state = {"pending_signal": Signal(
+            instrument="ES", strategy="momentum-US500", side="long",
+            entry_price=5380.0, stop=0.0, target=0.0,
+            rationale="stop hit", regime_context="", action="exit",
+        )}
+        assert route_after_risk(state) == "execute"
+
+    def test_risk_block_routes_to_notify_after_risk(self):
+        assert route_after_risk({"pending_notification": "blocked"}) == "notify"
 
 
 # ---------------------------------------------------------------------------

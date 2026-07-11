@@ -93,6 +93,30 @@ class TestFreezeAndResume:
         assert snap.values.get("pending_notification") is not None
         assert "momentum-US500" in snap.values["pending_notification"]
 
+    def test_exit_signal_does_not_pause_for_hitl(self, tmp_path):
+        db = str(tmp_path / "hitl.db")
+        cp = create_checkpointer(db)
+        graph = build_graph(checkpointer=cp)
+        config = {"configurable": {"thread_id": "exit-1"}}
+        exit_signal = Signal(
+            instrument="ES",
+            strategy="momentum-US500",
+            side="long",
+            entry_price=5380.0,
+            stop=0.0,
+            target=0.0,
+            rationale="stop hit",
+            regime_context="",
+            action="exit",
+        )
+
+        final = graph.invoke({"pending_signal": exit_signal}, config=config)
+        snap = graph.get_state(config)
+
+        assert not snap.next
+        assert final.get("pending_signal") is None
+        assert "would-execute exit" in final.get("last_action", "")
+
     def test_resume_approved_routes_to_execute(self, tmp_path):
         db = str(tmp_path / "hitl.db")
         cp = create_checkpointer(db)

@@ -7,7 +7,7 @@ strategies, and wires the module-level node contexts used by the graph.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -35,6 +35,7 @@ from talim.risk.cfd import select_account_balance
 from talim.risk.config import RiskConfigError, load_validated_config
 from talim.risk.pnl_tracker import PnLSnapshot, PnLTracker
 from talim.risk.rules import RiskRules
+from talim.models.bar import OHLCVBar
 from talim.strategy.indicators import ema
 from talim.strategy.loader import load_strategy
 
@@ -207,7 +208,7 @@ class Runtime:
 
     def seed_state(self, extra: TalimState | None = None) -> TalimState:
         """Build the baseline state used for cron/bridge graph invocations."""
-        positions = self._safe_positions()
+        positions = self._positions_with_memory_exit_levels(self._safe_positions())
         state: TalimState = {
             "active_strategies": list(self._active_strategies),
             "active_positions": positions,
@@ -442,7 +443,7 @@ class Runtime:
         return {
             "thread_id": thread_id,
             "exists": exists,
-            "paused": bool(next_nodes),
+            "paused": bool(next_nodes and pending is not None),
             "next_nodes": next_nodes,
             "signal_id": signal_id,
             "dashboard_url": dashboard_url,
@@ -751,6 +752,188 @@ class Runtime:
         """Return broker positions serialised for operator clients."""
         return [_jsonable(position) for position in self._safe_positions()]
 
+    def operator_positions_dashboard(self) -> dict[str, Any]:
+        """Return broker positions enriched with live quote-derived marks."""
+        positions = self._positions_with_memory_exit_levels(self._safe_positions())
+        enriched = [self._enrich_position(position) for position in positions]
+        total_mark_pnl = sum(
+            float(pos.get("mark_open_pnl") or 0.0)
+            for pos in enriched
+            if pos.get("mark_open_pnl") is not None
+        )
+        total_broker_pnl = sum(float(pos.get("broker_open_pnl") or 0.0) for pos in enriched)
+        return {
+            "summary": {
+                "position_count": len(enriched),
+                "mark_open_pnl": total_mark_pnl,
+                "broker_open_pnl": total_broker_pnl,
+                "timeframe": self.config.pricefeed_timeframe,
+                "pricefeed_connected": bool(self.price_feed.is_connected),
+                "exchange_name": self.config.exchange_name or "mock",
+                "exchange_mode": self.config.exchange_mode,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "positions": enriched,
+        }
+
+    def operator_position_chart(self, *, position_id: str, bars: int = 240) -> dict[str, Any] | None:
+        """Return recent candles and EMA overlays for one open position."""
+        positions = self._positions_with_memory_exit_levels(self._safe_positions())
+        match = None
+        for position in positions:
+            if str(getattr(position, "position_id", "") or "") == str(position_id):
+                match = self._enrich_position(position)
+                break
+        if match is None:
+            return None
+
+        instrument = str(match.get("instrument") or "")
+        bars = min(max(int(bars), 20), 500)
+        warnings: list[str] = []
+        source = "none"
+        recent: list[Any] = []
+        if hasattr(self.price_feed, "fetch_recent_bars"):
+            try:
+                recent = list(self.price_feed.fetch_recent_bars(instrument, total_bars=bars))
+                recent.sort(key=_bar_time_utc)
+                source = "broker_recent" if recent else "none"
+            except Exception as e:  # noqa: BLE001
+                logger.warning("runtime: failed to fetch open-position chart history", exc_info=True)
+                warnings.append(f"recent history fetch failed: {e}")
+
+        if not recent:
+            history = [
+                bar for bar in scanner_context.get_history(instrument)
+                if getattr(bar, "instrument", None) == instrument
+            ]
+            history.sort(key=_bar_time_utc)
+            recent = history[-bars:]
+            source = "scanner_history" if recent else source
+            if recent:
+                warnings.append("using scanner history fallback")
+
+        if not recent:
+            recent = self._position_tick_bars(instrument, total_bars=bars)
+            source = "broker_ticks" if recent else source
+            if recent:
+                warnings.append("using FOREX.com tick fallback; candles are tick-derived")
+
+        candle_payload = [self._chart_bar_payload(bar) for bar in recent]
+        closes = [float(bar.close) for bar in recent]
+        ema_fast = ema(closes, 8) if closes else []
+        ema_slow = ema(closes, 21) if closes else []
+        fast_payload = [
+            {"time": candle_payload[i]["time"], "value": round(value, 6)}
+            for i, value in enumerate(ema_fast)
+        ]
+        slow_payload = [
+            {"time": candle_payload[i]["time"], "value": round(value, 6)}
+            for i, value in enumerate(ema_slow)
+        ]
+        if not candle_payload and not warnings:
+            warnings.append("no recent bars available for this instrument")
+
+        return {
+            "position_id": match.get("position_id"),
+            "status": "ok" if candle_payload else "data_unavailable",
+            "source": source,
+            "timeframe": self.config.pricefeed_timeframe,
+            "requested": {"bars": bars},
+            "position": match,
+            "candles": candle_payload,
+            "indicators": {
+                "ema_fast": {"period": 8, "values": fast_payload},
+                "ema_slow": {"period": 21, "values": slow_payload},
+            },
+            "levels": {
+                "entry": match.get("entry_price"),
+                "mark": match.get("mark_price"),
+                "stop": match.get("stop"),
+                "target": match.get("target"),
+            },
+            "warnings": warnings,
+        }
+
+    def _enrich_position(self, position: Any) -> dict[str, Any]:
+        data = _jsonable(position)
+        broker_pnl = data.get("open_pnl")
+        data["broker_open_pnl"] = broker_pnl
+        data["mark_open_pnl"] = broker_pnl
+        data["pnl_source"] = "broker"
+        instrument = str(data.get("instrument") or "")
+        side = str(data.get("side") or "").lower()
+        try:
+            entry = float(data.get("entry_price") or 0.0)
+            qty = float(data.get("qty") or 0.0)
+        except (TypeError, ValueError):
+            return data
+        if not instrument or not side or qty <= 0 or entry <= 0:
+            return data
+
+        quote = self._position_quote(instrument)
+        if quote is None:
+            if broker_pnl in (None, 0, 0.0):
+                data["pnl_source"] = "unavailable"
+            return data
+
+        bid = getattr(quote, "bid", None)
+        offer = getattr(quote, "offer", None)
+        data["bid"] = bid
+        data["offer"] = offer
+        mark_price = offer if side == "short" else bid
+        if mark_price is None:
+            return data
+        mark_price = float(mark_price)
+        mark_pnl = (entry - mark_price) * qty if side == "short" else (mark_price - entry) * qty
+        data["mark_price"] = mark_price
+        data["mark_open_pnl"] = mark_pnl
+        data["open_pnl"] = mark_pnl
+        data["pnl_source"] = "live_quote"
+        return data
+
+    def _position_quote(self, instrument: str) -> Any | None:
+        if not hasattr(self.exchange, "get_quote"):
+            return None
+        try:
+            return self.exchange.get_quote(instrument)
+        except Exception:  # noqa: BLE001
+            logger.warning("runtime: failed to fetch quote for open position %s", instrument, exc_info=True)
+            return None
+
+    def _position_tick_bars(self, instrument: str, *, total_bars: int) -> list[OHLCVBar]:
+        """Return tick-derived bars for broker connectors without candle history."""
+        if not hasattr(self.exchange, "fetch_recent_ticks"):
+            return []
+        try:
+            ticks = self.exchange.fetch_recent_ticks(
+                instrument,
+                limit=min(max(int(total_bars), 20), 500),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("runtime: failed to fetch tick chart for open position %s", instrument, exc_info=True)
+            return []
+
+        out: list[OHLCVBar] = []
+        for idx, tick in enumerate(ticks):
+            ts = tick.timestamp
+            if ts is None:
+                ts = datetime.now(timezone.utc) - timedelta(seconds=len(ticks) - idx)
+            close = tick.price
+            out.append(
+                OHLCVBar(
+                    instrument=instrument,
+                    timestamp=ts,
+                    open=close,
+                    high=max(tick.bid, tick.offer, close),
+                    low=min(tick.bid, tick.offer, close),
+                    close=close,
+                    volume=0.0,
+                    timeframe=self.config.pricefeed_timeframe,
+                )
+            )
+        out.sort(key=_bar_time_utc)
+        return out[-total_bars:]
+
     def operator_decisions(
         self,
         *,
@@ -890,9 +1073,9 @@ class Runtime:
         snapshot = graph.get_state(config)
         values = dict(snapshot.values) if snapshot is not None else {}
         next_nodes = list(getattr(snapshot, "next", ()) or []) if snapshot is not None else []
-        paused = bool(next_nodes)
+        paused = bool(next_nodes and values.get("pending_signal") is not None)
 
-        positions = list(self.exchange.get_positions())
+        positions = self._positions_with_memory_exit_levels(list(self.exchange.get_positions()))
         pnl = self.pnl_tracker.refresh(self.exchange)
         repairs = reconcile_positions(
             self.exchange,
@@ -910,9 +1093,8 @@ class Runtime:
                 "open_pnl": pnl.open_pnl,
                 "daily_pnl": pnl.daily_pnl,
                 "last_action": "synced broker state",
+                "pending_notification": notification,
             }
-            if notification is not None:
-                update["pending_notification"] = notification
             graph.update_state(config, update)
             state_updated = True
 
@@ -936,6 +1118,58 @@ class Runtime:
         except Exception:  # noqa: BLE001
             logger.warning("runtime: failed to refresh positions", exc_info=True)
             return []
+
+    def _positions_with_memory_exit_levels(self, positions: list[Any]) -> list[Any]:
+        """Overlay approved stop/target levels when the broker omits them.
+
+        FOREX.com open-position lots may report Stop/Limit as absent even when
+        Talim's approved signal had protective levels. The position monitor
+        needs those original levels to enforce app-side exits.
+        """
+        if not positions or self.episodic is None:
+            return positions
+        try:
+            decisions = self.episodic.query_decisions(outcome="pending")
+        except Exception:  # noqa: BLE001
+            logger.warning("runtime: failed to query decision memory for exit levels", exc_info=True)
+            return positions
+
+        pending_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for decision in decisions:
+            instrument = str(decision.get("instrument") or "")
+            side = str(decision.get("side") or "")
+            if instrument and side:
+                pending_by_key[(instrument, side)] = decision
+
+        enriched: list[Any] = []
+        for position in positions:
+            instrument = str(getattr(position, "instrument", "") or "")
+            side = str(getattr(position, "side", "") or "")
+            decision = pending_by_key.get((instrument, side))
+            if decision is None:
+                enriched.append(position)
+                continue
+            try:
+                memory_stop = float(decision.get("stop") or 0.0)
+                memory_target = float(decision.get("target") or 0.0)
+            except (TypeError, ValueError):
+                enriched.append(position)
+                continue
+            stop = float(getattr(position, "stop", 0.0) or 0.0)
+            target = float(getattr(position, "target", 0.0) or 0.0)
+            strategy = str(decision.get("strategy") or getattr(position, "strategy", "") or "")
+            updates: dict[str, Any] = {}
+            if stop <= 0 and memory_stop > 0:
+                updates["stop"] = memory_stop
+            if target <= 0 and memory_target > 0:
+                updates["target"] = memory_target
+            if strategy and not getattr(position, "strategy", ""):
+                updates["strategy"] = strategy
+            if updates:
+                enriched.append(dc_replace(position, **updates))
+            else:
+                enriched.append(position)
+        return enriched
 
     def _safe_pnl_snapshot(self) -> PnLSnapshot | None:
         try:

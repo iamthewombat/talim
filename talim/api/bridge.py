@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -132,6 +132,24 @@ class OperatorDecisionResponse(BaseModel):
 
 class OperatorPositionsResponse(BaseModel):
     positions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperatorPositionsDashboardResponse(BaseModel):
+    summary: dict[str, Any] = Field(default_factory=dict)
+    positions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OperatorPositionChartResponse(BaseModel):
+    position_id: str | None = None
+    status: str
+    source: str
+    timeframe: str
+    requested: dict[str, Any]
+    position: dict[str, Any]
+    candles: list[dict[str, Any]] = Field(default_factory=list)
+    indicators: dict[str, Any] = Field(default_factory=dict)
+    levels: dict[str, Any] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class OperatorDecisionsResponse(BaseModel):
@@ -436,6 +454,32 @@ def create_app(
         """Return current broker positions."""
         rt = require_runtime()
         return OperatorPositionsResponse(positions=rt.operator_positions())
+
+    @app.get(
+        "/talim/operator/positions/dashboard",
+        response_model=OperatorPositionsDashboardResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_positions_dashboard() -> OperatorPositionsDashboardResponse:
+        """Return open positions enriched with live mark/P&L data."""
+        rt = require_runtime()
+        return OperatorPositionsDashboardResponse(**rt.operator_positions_dashboard())
+
+    @app.get(
+        "/talim/operator/positions/{position_id}/chart",
+        response_model=OperatorPositionChartResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_position_chart(
+        position_id: str,
+        bars: int = Query(default=240, ge=20, le=500),
+    ) -> OperatorPositionChartResponse:
+        """Return recent chart candles for one open position."""
+        rt = require_runtime()
+        chart = rt.operator_position_chart(position_id=position_id, bars=bars)
+        if chart is None:
+            raise HTTPException(status_code=404, detail="position not found")
+        return OperatorPositionChartResponse(**chart)
 
     @app.get(
         "/talim/operator/decisions",

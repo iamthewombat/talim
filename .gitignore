@@ -7,6 +7,8 @@ __pycache__/
 
 # Secrets
 .env
+.env.backup*
+.env.bak*
 
 # IDE / editor
 .idea/
@@ -46,3 +48,6 @@ nginx/certs/
 dist/
 *.egg-info/
 build/
+
+# Local runtime logs (Dukascopy pulls, ad-hoc script runs)
+logs/
