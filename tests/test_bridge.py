@@ -198,6 +198,8 @@ class TestOperatorDashboard:
         assert r.status_code == 200
         assert "javascript" in r.headers["content-type"]
         assert "refreshStatus" in r.text
+        # Pre-auth halt indicator falls back to the public halt-status route.
+        assert "/talim/halt-status" in r.text
 
         r = client.get("/talim/dashboard/ui.js")
         assert r.status_code == 200

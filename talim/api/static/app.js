@@ -214,10 +214,25 @@ function validationText(v) {
 // Runtime status
 // ---------------------------------------------------------------------------
 
-async function refreshStatus() {
-  const body = document.getElementById("status-body");
+function setHaltIndicator(halted) {
   const dot = document.getElementById("status-dot");
   const label = document.getElementById("status-label");
+  state.halted = halted == null ? null : !!halted;
+  updateTitle();
+  if (halted == null) {
+    dot.className = "dot unknown";
+    label.textContent = "—";
+  } else if (halted) {
+    dot.className = "dot bad";
+    label.textContent = "HALTED";
+  } else {
+    dot.className = "dot ok";
+    label.textContent = "running";
+  }
+}
+
+async function refreshStatus() {
+  const body = document.getElementById("status-body");
   try {
     const data = await api("/talim/operator/status");
     const rt = data.runtime || {};
@@ -263,21 +278,17 @@ async function refreshStatus() {
     controls.appendChild(haltBtn);
     body.appendChild(controls);
 
-    state.halted = !!data.halted;
-    updateTitle();
-    if (data.halted) {
-      dot.className = "dot bad";
-      label.textContent = "HALTED";
-    } else {
-      dot.className = "dot ok";
-      label.textContent = "running";
-    }
+    setHaltIndicator(data.halted);
   } catch (err) {
-    dot.className = "dot unknown";
-    label.textContent = "—";
-    state.halted = null;
-    updateTitle();
     renderError(body, err);
+    // The runtime endpoint needs auth, but the kill-switch flag is public
+    // (/talim/halt-status): keep the header dot truthful before sign-in.
+    try {
+      const hs = await api("/talim/halt-status");
+      setHaltIndicator(hs.halted);
+    } catch (_) {
+      setHaltIndicator(null);
+    }
   }
 }
 

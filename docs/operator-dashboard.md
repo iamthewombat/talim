@@ -77,7 +77,9 @@ in Talim itself or only in the OpenClaw integration layer.
 
 - **Runtime** — exchange name/mode, pricefeed state and subscriptions,
   active instruments + strategies, open P&L, daily P&L, account
-  balance, halt status + HALT/Resume button (write-gated).
+  balance, halt status + HALT/Resume button (write-gated). The halt
+  dot in the header stays truthful even before sign-in by falling
+  back to the public `/talim/halt-status` endpoint.
 - **Pending HITL** — the pending signal on `thread_id=cron-main`,
   including its durable `signal_id` and advisory validation status when
   present, with Approve/Reject buttons (write-gated). POSTs to
