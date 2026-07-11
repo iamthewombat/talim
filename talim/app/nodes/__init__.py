@@ -168,6 +168,19 @@ def execute(state: TalimState) -> TalimState:
                 except Exception:  # noqa: BLE001
                     logger.warning("execute: open webhook push failed", exc_info=True)
         if ctx.episodic is not None:
+            entry_decision_id = None
+            if (
+                sig.action == "exit"
+                and order.status != OrderStatus.REJECTED
+            ):
+                closed_ids = ctx.episodic.close_pending_entries(
+                    instrument=sig.instrument,
+                    side=sig.side,
+                    strategy=sig.strategy or None,
+                )
+                # A broker close flattens the whole stack; link the most
+                # recent entry, matching the dashboard's LIFO pairing.
+                entry_decision_id = closed_ids[-1] if closed_ids else None
             ctx.episodic.record_decision(
                 timestamp=datetime.now(tz=timezone.utc).isoformat(),
                 instrument=sig.instrument,
@@ -185,16 +198,9 @@ def execute(state: TalimState) -> TalimState:
                 atr_ratio=state.get("atr_ratio"),
                 action="approve",
                 notes=f"order_id={order.order_id} order_side={order.side} qty={order.qty}",
+                qty=closing_position.qty if closing_position is not None else order.qty,
+                entry_decision_id=entry_decision_id,
             )
-            if (
-                sig.action == "exit"
-                and order.status != OrderStatus.REJECTED
-            ):
-                ctx.episodic.close_pending_entries(
-                    instrument=sig.instrument,
-                    side=sig.side,
-                    strategy=sig.strategy or None,
-                )
     except Exception as e:  # noqa: BLE001
         logger.exception("execute: order placement failed: %s", e)
         update["last_action"] = f"execute-failed: {e}"

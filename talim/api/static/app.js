@@ -101,41 +101,24 @@ function pnlClass(v) {
   return Number(v) >= 0 ? "pnl-pos" : "pnl-neg";
 }
 
-function extractQty(notes) {
-  const match = String(notes || "").match(/\bqty=([0-9.]+)/);
-  if (!match) return null;
-  const qty = Number(match[1]);
-  return Number.isFinite(qty) ? qty : null;
-}
-
 function buildTradeRows(decisions) {
-  const chronological = [...decisions].reverse();
-  const openEntries = [];
+  const entriesById = new Map();
+  for (const r of decisions) {
+    if (r.signal_type === "enter") entriesById.set(r.id, r);
+  }
   const pairedEntryIds = new Set();
   const trades = [];
 
-  for (const r of chronological) {
-    if (r.signal_type === "enter") {
-      openEntries.push(r);
-      continue;
-    }
+  for (const r of decisions) {
+    if (r.signal_type === "enter") continue;
     if (r.signal_type !== "exit") {
       trades.push({ kind: "decision", row: r, timestamp: r.timestamp || r.created_at });
       continue;
     }
 
-    let matchIndex = -1;
-    for (let i = openEntries.length - 1; i >= 0; i--) {
-      const e = openEntries[i];
-      if (e.instrument === r.instrument && e.strategy === r.strategy && e.side === r.side && Number(e.id) < Number(r.id)) {
-        matchIndex = i;
-        break;
-      }
-    }
-
-    const entry = matchIndex >= 0 ? openEntries.splice(matchIndex, 1)[0] : null;
+    const entry = (r.entry_decision_id != null && entriesById.get(r.entry_decision_id)) || null;
     if (entry) pairedEntryIds.add(entry.id);
-    const qty = extractQty(r.notes) || (entry && extractQty(entry.notes)) || 1;
+    const qty = Number(r.qty) || (entry && Number(entry.qty)) || 1;
     const direction = r.side === "short" ? -1 : 1;
     const entryPrice = entry ? Number(entry.entry_price) : null;
     const exitPrice = Number(r.entry_price);
@@ -145,7 +128,7 @@ function buildTradeRows(decisions) {
     trades.push({ kind: "trade", entry, exit: r, qty, points, timestamp: r.timestamp || r.created_at });
   }
 
-  for (const e of openEntries) {
+  for (const e of entriesById.values()) {
     if (!pairedEntryIds.has(e.id)) trades.push({ kind: "open", entry: e, timestamp: e.timestamp || e.created_at });
   }
 

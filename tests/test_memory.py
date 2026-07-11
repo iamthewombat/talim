@@ -122,9 +122,133 @@ class TestEpisodicMemory:
                 row[1]
                 for row in mem._conn.execute("PRAGMA table_info(decisions)").fetchall()
             }
-            assert {"signal_type", "atr_ratio", "action", "notes"} <= cols
+            assert {
+                "signal_type", "atr_ratio", "action", "notes",
+                "qty", "entry_decision_id",
+            } <= cols
             row = mem.query_decisions(instrument="ES")[0]
             assert row["signal_type"] == "entry"  # default applied
+            assert row["qty"] is None
+            assert row["entry_decision_id"] is None
+            mem.close()
+
+    def test_records_trade_link_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = _make_episodic(tmp)
+            entry_id = mem.record_decision(
+                timestamp="2025-06-15T09:30:00",
+                instrument="ES",
+                strategy="momentum-US500",
+                side="long",
+                entry_price=5000.0,
+                stop=4980.0,
+                target=5040.0,
+                signal_type="enter",
+                qty=2.0,
+            )
+            mem.record_decision(
+                timestamp="2025-06-15T10:30:00",
+                instrument="ES",
+                strategy="momentum-US500",
+                side="long",
+                entry_price=5010.0,
+                stop=4980.0,
+                target=5040.0,
+                signal_type="exit",
+                qty=2.0,
+                entry_decision_id=entry_id,
+            )
+            rows = mem.query_decisions(instrument="ES")
+            by_type = {r["signal_type"]: r for r in rows}
+            assert by_type["enter"]["qty"] == 2.0
+            assert by_type["exit"]["qty"] == 2.0
+            assert by_type["exit"]["entry_decision_id"] == entry_id
+            mem.close()
+
+    def test_close_pending_entries_returns_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = _make_episodic(tmp)
+            ids = [
+                mem.record_decision(
+                    timestamp=f"2025-06-15T09:3{i}:00",
+                    instrument="ES",
+                    strategy="momentum-US500",
+                    side="long",
+                    entry_price=5000.0 + i,
+                    stop=4980.0,
+                    target=5040.0,
+                    signal_type="enter",
+                    outcome="pending",
+                )
+                for i in range(2)
+            ]
+            closed = mem.close_pending_entries(
+                instrument="ES", side="long", strategy="momentum-US500"
+            )
+            assert closed == ids
+            assert all(
+                r["outcome"] == "closed"
+                for r in mem.query_decisions(instrument="ES")
+            )
+            # Nothing pending remains, so a second call returns no ids.
+            assert mem.close_pending_entries(instrument="ES", side="long") == []
+            mem.close()
+
+    def test_migration_backfills_trade_links_from_notes(self):
+        # Legacy rows carry qty only in notes and no entry link; opening the
+        # DB after the WP-85 migration should backfill both.
+        with tempfile.TemporaryDirectory() as tmp:
+            import sqlite3
+            db = f"{tmp}/legacy.db"
+            mem = EpisodicMemory(db_path=db)
+            mem.close()
+            conn = sqlite3.connect(db)
+            conn.execute("ALTER TABLE decisions DROP COLUMN qty")
+            conn.execute("ALTER TABLE decisions DROP COLUMN entry_decision_id")
+            base = (
+                "INSERT INTO decisions (timestamp, instrument, strategy, side, "
+                "entry_price, stop, target, signal_type, outcome, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            conn.execute(base, (
+                "2025-06-15T09:30:00", "ES", "momentum-US500", "long",
+                5000.0, 4980.0, 5040.0, "enter", "closed", "order_id=1 qty=2.0",
+            ))
+            conn.execute(base, (
+                "2025-06-15T09:35:00", "NQ", "momentum-US500", "long",
+                20_000.0, 19_900.0, 20_200.0, "enter", "pending", "order_id=2 qty=1.0",
+            ))
+            conn.execute(base, (
+                "2025-06-15T10:30:00", "ES", "momentum-US500", "long",
+                5010.0, 4980.0, 5040.0, "exit", "closed", "order_id=3 qty=2.0",
+            ))
+            conn.commit()
+            conn.close()
+
+            mem = EpisodicMemory(db_path=db)
+            rows = mem.query_decisions()
+            by_key = {(r["instrument"], r["signal_type"]): r for r in rows}
+            assert by_key[("ES", "enter")]["qty"] == 2.0
+            assert by_key[("ES", "exit")]["qty"] == 2.0
+            assert (
+                by_key[("ES", "exit")]["entry_decision_id"]
+                == by_key[("ES", "enter")]["id"]
+            )
+            # Unrelated pending entry is not claimed by the ES exit.
+            assert by_key[("NQ", "enter")]["entry_decision_id"] is None
+            assert by_key[("NQ", "enter")]["qty"] == 1.0
+
+            # Backfill only runs when the column is first added: relink to a
+            # bogus value and reopen — it must survive.
+            mem._conn.execute(
+                "UPDATE decisions SET entry_decision_id = NULL WHERE signal_type = 'exit'"
+            )
+            mem._conn.commit()
+            mem.close()
+            mem = EpisodicMemory(db_path=db)
+            rows = mem.query_decisions(instrument="ES")
+            exit_row = next(r for r in rows if r["signal_type"] == "exit")
+            assert exit_row["entry_decision_id"] is None
             mem.close()
 
     def test_record_and_query_all(self):
