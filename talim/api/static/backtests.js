@@ -39,6 +39,10 @@ async function api(path) {
   if (!resp.ok) {
     const err = new Error((body && body.detail) || `HTTP ${resp.status}`);
     err.status = resp.status;
+    if (resp.status === 401 && state.authenticated) {
+      state.authenticated = false;
+      syncAuthUi();
+    }
     throw err;
   }
   return body;
@@ -65,7 +69,7 @@ function el(tag, attrs, children) {
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 function fmtNum(v, digits = 2) { return v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(digits); }
 function fmtSigned(v) { return v == null || Number.isNaN(Number(v)) ? "—" : `${Number(v) >= 0 ? "+" : ""}${Number(v).toFixed(2)}`; }
-function pnlClass(v) { return v == null || Number(v) >= 0 ? "pnl-pos" : "pnl-neg"; }
+function pnlClass(v) { return v == null || Number.isNaN(Number(v)) ? "" : (Number(v) >= 0 ? "pnl-pos" : "pnl-neg"); }
 function fmtPct(v) { return v == null || Number.isNaN(Number(v)) ? "—" : `${(Number(v) * 100).toFixed(1)}%`; }
 function fmtDate(v) { return v ? String(v).slice(0, 19).replace("T", " ") : "—"; }
 
@@ -350,15 +354,15 @@ function metricLabel(name) {
 
 function bindEvents() {
   document.getElementById("signin-btn").addEventListener("click", async () => {
-    const secret = window.prompt("Paste TALIM_BRIDGE_SECRET once for this browser session:");
+    const secret = await TalimUI.promptSecret();
     if (!secret) return;
     try {
-      await loginWithSecret(secret.trim());
+      await loginWithSecret(secret);
       syncAuthUi();
       await refreshFilterOptions();
       refreshRuns();
     } catch (err) {
-      window.alert(err.message || "Sign in failed");
+      TalimUI.toast(err.message || "Sign in failed", "error");
     }
   });
   document.getElementById("refresh-btn").addEventListener("click", refreshRuns);

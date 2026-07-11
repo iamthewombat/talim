@@ -57,7 +57,16 @@ async function api(path, options = {}) {
   const resp = await fetch(path, Object.assign({}, options, { headers, credentials: "same-origin" }));
   let body = null;
   try { body = await resp.json(); } catch (_) { body = null; }
-  if (!resp.ok) throw new Error((body && body.detail) || `HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const err = new Error((body && body.detail) || `HTTP ${resp.status}`);
+    err.status = resp.status;
+    if (resp.status === 401 && state.authenticated) {
+      state.authenticated = false;
+      state.unlocked = false;
+      syncAuthUi();
+    }
+    throw err;
+  }
   return body;
 }
 
@@ -529,12 +538,13 @@ async function refreshLiveOnly() {
 async function decide(approved) {
   const id = signalId();
   const verb = approved ? "Approve" : "Reject";
-  if (!confirm(`${verb} signal ${id}?`)) return;
+  const ok = await TalimUI.confirm(`${verb} signal ${id}?`, { confirmLabel: verb, danger: !approved });
+  if (!ok) return;
   try {
     const result = await api("/talim/operator/decision", { method: "POST", body: JSON.stringify({ thread_id: THREAD_ID, approved, signal_id: id }) });
-    if (result.last_action) alert(result.last_action);
+    TalimUI.toast(result.last_action || (approved ? "Signal approved" : "Signal rejected"), "ok");
     await refreshAll();
-  } catch (err) { alert("Decision failed: " + err.message); }
+  } catch (err) { TalimUI.toast("Decision failed: " + err.message, "error"); }
 }
 
 function bind() {
@@ -544,12 +554,15 @@ function bind() {
   });
   document.getElementById("fit-chart-btn").addEventListener("click", () => { if (state.chart) state.chart.timeScale().fitContent(); });
   document.getElementById("signin-btn").addEventListener("click", async () => {
-    const secret = prompt("Paste TALIM_BRIDGE_SECRET once for this browser session:");
+    const secret = await TalimUI.promptSecret();
     if (!secret) return;
-    try { await loginWithSecret(secret.trim()); syncAuthUi(); await refreshAll(); }
-    catch (err) { alert(err.message); }
+    try { await loginWithSecret(secret); syncAuthUi(); await refreshAll(); }
+    catch (err) { TalimUI.toast(err.message || "Sign in failed", "error"); }
   });
-  document.getElementById("unlock-btn").addEventListener("click", () => { if (confirm("Unlock write actions for this tab?")) { state.unlocked = true; syncAuthUi(); render({ chart: false }); } });
+  document.getElementById("unlock-btn").addEventListener("click", async () => {
+    const ok = await TalimUI.confirm("Unlock write actions for this tab?", { confirmLabel: "Unlock writes" });
+    if (ok) { state.unlocked = true; syncAuthUi(); render({ chart: false }); }
+  });
   document.getElementById("lock-btn").addEventListener("click", () => { state.unlocked = false; syncAuthUi(); render({ chart: false }); });
   if (window.ResizeObserver) {
     state.resizeObserver = new ResizeObserver(() => {

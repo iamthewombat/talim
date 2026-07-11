@@ -199,6 +199,12 @@ class TestOperatorDashboard:
         assert "javascript" in r.headers["content-type"]
         assert "refreshStatus" in r.text
 
+        r = client.get("/talim/dashboard/ui.js")
+        assert r.status_code == 200
+        assert "javascript" in r.headers["content-type"]
+        assert "TalimUI" in r.text
+        assert "promptSecret" in r.text
+
         r = client.get("/talim/dashboard/style.css")
         assert r.status_code == 200
         assert "text/css" in r.headers["content-type"]

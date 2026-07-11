@@ -46,7 +46,15 @@ async function api(path, options = {}) {
   const resp = await fetch(path, Object.assign({}, options, { headers, credentials: "same-origin" }));
   let body = null;
   try { body = await resp.json(); } catch (_) { body = null; }
-  if (!resp.ok) throw new Error((body && body.detail) || `HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const err = new Error((body && body.detail) || `HTTP ${resp.status}`);
+    err.status = resp.status;
+    if (resp.status === 401 && state.authenticated) {
+      state.authenticated = false;
+      syncAuthUi();
+    }
+    throw err;
+  }
   return body;
 }
 
@@ -311,9 +319,10 @@ function renderFatal(msg) {
 }
 
 document.getElementById("signin-btn").addEventListener("click", async () => {
-  const secret = window.prompt("Talim bridge secret");
+  const secret = await TalimUI.promptSecret();
   if (!secret) return;
-  try { await loginWithSecret(secret); await refreshAll(); } catch (err) { window.alert(err.message); }
+  try { await loginWithSecret(secret); syncAuthUi(); await refreshAll(); }
+  catch (err) { TalimUI.toast(err.message || "Sign in failed", "error"); }
 });
 document.getElementById("refresh-btn").addEventListener("click", refreshAll);
 document.getElementById("fit-chart-btn").addEventListener("click", () => {
