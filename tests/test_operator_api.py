@@ -118,6 +118,9 @@ def test_operator_pending_and_decision_approve_full_path(operator_client):
     decision_rows = decisions.json()["decisions"]
     assert len(decision_rows) == 1
     assert decision_rows[0]["strategy"] == "momentum-US500"
+    # WP-85 trade-pairing columns flow through to the operator API.
+    assert decision_rows[0]["qty"] is not None
+    assert decision_rows[0]["entry_decision_id"] is None
 
 
 def test_operator_decision_reject_clears_pending_without_order(operator_client):

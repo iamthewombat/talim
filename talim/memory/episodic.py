@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
@@ -28,7 +29,7 @@ class EpisodicMemory:
         self._migrate_signals()
 
     def _migrate_decisions(self) -> None:
-        """Idempotently add WP-21 columns to pre-existing decisions tables."""
+        """Idempotently add WP-21/WP-85 columns to pre-existing decisions tables."""
         existing = {
             row[1]
             for row in self._conn.execute("PRAGMA table_info(decisions)").fetchall()
@@ -38,11 +39,49 @@ class EpisodicMemory:
             ("atr_ratio", "REAL DEFAULT NULL"),
             ("action", "TEXT NOT NULL DEFAULT ''"),
             ("notes", "TEXT NOT NULL DEFAULT ''"),
+            ("qty", "REAL DEFAULT NULL"),
+            ("entry_decision_id", "INTEGER DEFAULT NULL"),
         ]
         for name, ddl in adds:
             if name not in existing:
                 self._conn.execute(f"ALTER TABLE decisions ADD COLUMN {name} {ddl}")
+        if "entry_decision_id" not in existing:
+            self._backfill_trade_links()
         self._conn.commit()
+
+    def _backfill_trade_links(self) -> None:
+        """One-time backfill of qty/entry_decision_id for pre-WP-85 rows.
+
+        Reproduces the pairing the dashboard used to derive client-side:
+        qty comes from the ``qty=`` token in notes, and each exit links to
+        the most recent unclaimed earlier entry with the same instrument,
+        strategy, and side.
+        """
+        rows = self._conn.execute(
+            "SELECT id, instrument, strategy, side, signal_type, notes"
+            " FROM decisions ORDER BY id"
+        ).fetchall()
+        open_entries: dict[tuple[str, str, str], list[int]] = {}
+        for row in rows:
+            match = re.search(r"\bqty=([0-9.]+)", row["notes"] or "")
+            if match:
+                try:
+                    self._conn.execute(
+                        "UPDATE decisions SET qty = ? WHERE id = ?",
+                        (float(match.group(1)), row["id"]),
+                    )
+                except ValueError:
+                    pass
+            key = (row["instrument"], row["strategy"], row["side"])
+            if row["signal_type"] == "enter":
+                open_entries.setdefault(key, []).append(row["id"])
+            elif row["signal_type"] == "exit":
+                stack = open_entries.get(key)
+                if stack:
+                    self._conn.execute(
+                        "UPDATE decisions SET entry_decision_id = ? WHERE id = ?",
+                        (stack.pop(), row["id"]),
+                    )
 
 
     def _migrate_signals(self) -> None:
@@ -125,6 +164,8 @@ class EpisodicMemory:
         atr_ratio: float | None = None,
         action: str = "",
         notes: str = "",
+        qty: float | None = None,
+        entry_decision_id: int | None = None,
     ) -> int:
         """Record a trading decision. Returns the row id."""
         cur = self._conn.execute(
@@ -132,13 +173,13 @@ class EpisodicMemory:
             INSERT INTO decisions
                 (timestamp, instrument, strategy, side, entry_price, stop, target,
                  regime, rationale, outcome, pnl, approved,
-                 signal_type, atr_ratio, action, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 signal_type, atr_ratio, action, notes, qty, entry_decision_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 timestamp, instrument, strategy, side, entry_price, stop, target,
                 regime, rationale, outcome, pnl, 1 if approved else 0,
-                signal_type, atr_ratio, action, notes,
+                signal_type, atr_ratio, action, notes, qty, entry_decision_id,
             ),
         )
         self._conn.commit()
@@ -180,7 +221,7 @@ class EpisodicMemory:
 
     def close_pending_entries(
         self, *, instrument: str, side: str, strategy: str | None = None
-    ) -> int:
+    ) -> list[int]:
         """Mark pending `enter` decisions for an instrument+side as closed.
 
         Called by the execute node after a successful exit so the entry row's
@@ -188,7 +229,8 @@ class EpisodicMemory:
         a divergence. Pass `strategy` to avoid closing another strategy's
         pending entries on the same instrument+side; stacked entries from the
         matching strategy are all closed because the broker close is a full
-        position close. Returns the number of rows updated.
+        position close. Returns the updated row ids, oldest first, so the
+        caller can link the exit decision back to its entry.
         """
         clauses = [
             "instrument = ?",
@@ -200,12 +242,21 @@ class EpisodicMemory:
         if strategy:
             clauses.append("strategy = ?")
             params.append(strategy)
-        cur = self._conn.execute(
-            f"UPDATE decisions SET outcome = 'closed' WHERE {' AND '.join(clauses)}",
-            params,
-        )
-        self._conn.commit()
-        return cur.rowcount or 0
+        where = " AND ".join(clauses)
+        ids = [
+            row["id"]
+            for row in self._conn.execute(
+                f"SELECT id FROM decisions WHERE {where} ORDER BY id", params
+            )
+        ]
+        if ids:
+            placeholders = ",".join("?" * len(ids))
+            self._conn.execute(
+                f"UPDATE decisions SET outcome = 'closed' WHERE id IN ({placeholders})",
+                ids,
+            )
+            self._conn.commit()
+        return ids
 
     def get_stats(self, strategy: str) -> dict:
         """Get aggregate stats for a strategy."""

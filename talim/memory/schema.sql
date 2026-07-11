@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS decisions (
     atr_ratio REAL DEFAULT NULL,
     action TEXT NOT NULL DEFAULT '',           -- approve, reject, override
     notes TEXT NOT NULL DEFAULT '',
+    -- Trade pairing columns (WP-85)
+    qty REAL DEFAULT NULL,
+    entry_decision_id INTEGER DEFAULT NULL,    -- exit rows: id of the entry they closed
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

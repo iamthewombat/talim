@@ -68,6 +68,8 @@ def test_execute_places_order_and_records_decision(tmp_path):
     assert rows[0]["signal_type"] == "enter"
     assert rows[0]["action"] == "approve"
     assert rows[0]["atr_ratio"] == 1.3
+    assert rows[0]["qty"] == 1.0
+    assert rows[0]["entry_decision_id"] is None
     mem.close()
 
 
@@ -203,6 +205,34 @@ def test_execute_exit_flips_matching_pending_entry_to_closed(tmp_path):
     assert by_type["enter"]["pnl"] == pytest.approx(0.0)
     assert by_type["exit"]["outcome"] == "closed"
     assert by_type["exit"]["pnl"] == pytest.approx(10.0)
+    assert by_type["exit"]["entry_decision_id"] == by_type["enter"]["id"]
+    assert by_type["exit"]["qty"] == 1.0
+    mem.close()
+
+
+def test_execute_exit_links_most_recent_stacked_entry(tmp_path):
+    exchange = MockExchange(starting_balance=100_000.0)
+    exchange.set_fill_price("ES", 5400.0)
+    mem = EpisodicMemory(db_path=str(tmp_path / "ep.db"))
+    configure_execute(exchange, episodic=mem)
+
+    execute({"pending_signal": _signal(action="enter", side="long")})
+    execute({"pending_signal": _signal(action="enter", side="long")})
+
+    exchange.set_fill_price("ES", 5410.0)
+    execute({
+        "pending_signal": _signal(action="exit", side="long"),
+        "active_positions": exchange.get_positions(),
+    })
+
+    rows = mem.query_decisions(instrument="ES")
+    entries = sorted(
+        (r for r in rows if r["signal_type"] == "enter"), key=lambda r: r["id"]
+    )
+    exit_row = next(r for r in rows if r["signal_type"] == "exit")
+    assert len(entries) == 2
+    assert all(r["outcome"] == "closed" for r in entries)
+    assert exit_row["entry_decision_id"] == entries[-1]["id"]
     mem.close()
 
 
