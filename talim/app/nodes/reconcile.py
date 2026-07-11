@@ -90,11 +90,10 @@ def reconcile_positions(
     exchange_positions = _normalise_positions_by_instrument(exchange.get_positions())
 
     # 2. Get pending decisions from episodic memory (outcome = "pending")
-    pending = episodic.query_decisions()
+    pending = episodic.query_decisions(outcome="pending")
     memory_pending: dict[str, dict] = {}
     for d in pending:
-        if d.get("outcome") == "pending":
-            memory_pending[d["instrument"]] = d
+        memory_pending[d["instrument"]] = d
 
     # 3. State positions (what the graph thinks is open)
     state_map = _normalise_positions_by_instrument(state_positions)

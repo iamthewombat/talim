@@ -19,7 +19,7 @@
 
 Research and backtesting TODOs that are not yet formal Talim work packages are tracked in:
 
-- [`/home/wombat/openclaw-app/BACKTESTING_ROADMAP.md`](/home/wombat/openclaw-app/BACKTESTING_ROADMAP.md)
+- `BACKTESTING_ROADMAP.md` in the OpenClaw app checkout (not part of this repo; on the deploy host it lives at `~/openclaw-app/BACKTESTING_ROADMAP.md`)
 
 Use that roadmap for messy/open-ended items such as finding more historical backtesting data, documenting Justin's discretionary strategy, adding/testing indicators, expanding assets, and defining comparison rules. Promote items into numbered WPs here once they become concrete implementation work.
 
@@ -37,7 +37,7 @@ Current active roadmap items:
 
 Off-host backups, safe-write code patterns, HITL gates for irreplaceable data, and resumption-protocol work are tracked in:
 
-- [`/home/wombat/openclaw-app/RELIABILITY_ROADMAP.md`](/home/wombat/openclaw-app/RELIABILITY_ROADMAP.md)
+- `RELIABILITY_ROADMAP.md` in the OpenClaw app checkout (not part of this repo; on the deploy host it lives at `~/openclaw-app/RELIABILITY_ROADMAP.md`)
 
 Use that roadmap for anything whose value is "we don't lose work / can recover from mistakes." Originated from the 2026-05-25 AU200.proxy ASK parquet incident. Promote items into numbered WPs here once they become concrete Talim implementation work.
 

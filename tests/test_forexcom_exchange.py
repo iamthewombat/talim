@@ -10,7 +10,10 @@ import pytest
 from talim.cfd import load_default_registry
 from talim.connectors.exchange.base import OrderStatus
 from talim.connectors.exchange.forexcom_discovery import ForexcomCredentials
-from talim.connectors.exchange.forexcom_exchange import ForexcomExchange
+from talim.connectors.exchange.forexcom_exchange import (
+    ForexcomExchange,
+    ForexcomExchangeError,
+)
 from talim.models.position import Position
 
 
@@ -314,6 +317,15 @@ class TestForexcomExchange:
                 )
             if request.url.path == "/TradingApi/order/close":
                 return httpx.Response(405, text="")
+            if request.url.path == "/TradingApi/useraccount/ClientAndTradingAccount":
+                return httpx.Response(
+                    200,
+                    json={
+                        "TradingAccounts": [
+                            {"TradingAccountId": 407617570, "PositionMethodId": 1}
+                        ]
+                    },
+                )
             if request.url.path == "/TradingApi/order/newtradeorder":
                 payload = json.loads(request.content)
                 new_orders.append(payload)
@@ -340,3 +352,68 @@ class TestForexcomExchange:
         assert new_orders[0]["Direction"] == "buy"
         assert new_orders[0]["Quantity"] == 1.0
         assert new_orders[0]["AuditId"] == "audit-fallback"
+
+    def test_close_position_fallback_refused_on_non_fifo_account(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/TradingApi/session":
+                return httpx.Response(200, json={"Session": "sess-1", "StatusCode": 1})
+            if request.url.path == "/TradingApi/order/openpositions":
+                return httpx.Response(
+                    200,
+                    json={
+                        "OpenPositions": [
+                            {
+                                "OrderId": 1001,
+                                "MarketId": 404709651,
+                                "Direction": "sell",
+                                "Quantity": 1.0,
+                                "Price": 9050.0,
+                                "LastChangedDateTimeUtc": "/Date(1776459600000)/",
+                            }
+                        ]
+                    },
+                )
+            if request.url.path == "/TradingApi/market/404709651/tickhistory":
+                return httpx.Response(
+                    200,
+                    json={
+                        "PriceTicks": [
+                            {
+                                "TickDate": "/Date(1776459600132)/",
+                                "Price": 9048.0,
+                                "Bid": 9047.5,
+                                "Offer": 9048.5,
+                                "AuditId": "audit-fallback",
+                            }
+                        ]
+                    },
+                )
+            if request.url.path == "/TradingApi/order/close":
+                return httpx.Response(404, text="")
+            if request.url.path == "/TradingApi/useraccount/ClientAndTradingAccount":
+                return httpx.Response(
+                    200,
+                    json={
+                        "TradingAccounts": [
+                            {"TradingAccountId": 407617570, "PositionMethodId": 3}
+                        ]
+                    },
+                )
+            if request.url.path == "/TradingApi/order/newtradeorder":
+                raise AssertionError("opposite market order must not be placed on non-FIFO accounts")
+            raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+        exchange = _build_exchange(handler)
+        with pytest.raises(ForexcomExchangeError, match="not FIFO"):
+            exchange.close_position(
+                Position(
+                    instrument="AU200.cash",
+                    side="short",
+                    qty=1.0,
+                    entry_price=9050.0,
+                    stop=9100.0,
+                    target=9000.0,
+                    strategy="momentum-AU200",
+                    position_id="1001",
+                )
+            )

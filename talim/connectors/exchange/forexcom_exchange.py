@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import logging
 import uuid
 from typing import Any
 
@@ -45,7 +46,22 @@ class _Quote:
     audit_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class Tick:
+    """One parsed price tick from the FOREX.com tick history feed."""
+
+    timestamp: datetime | None
+    price: float
+    bid: float
+    offer: float
+
+
 _DIRECTION_MAP = {"buy": "buy", "sell": "sell"}
+
+# StoneX TradingApi position method: 1 == FIFO (LIFO=2, hedging accounts differ).
+_FIFO_POSITION_METHOD_ID = 1
+
+logger = logging.getLogger("talim.exchange.forexcom")
 
 
 class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
@@ -65,6 +81,7 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
         self._trading_account_id = int(trading_account_id)
         self._client_account_id = int(client_account_id)
         self._orders_cache: dict[str, Order] = {}
+        self._position_method_id_cache: int | None = None
         self._instrument_by_market_id: dict[str, str] = {}
         for spec in self._registry.list_instruments():
             for venue in spec.venues:
@@ -87,6 +104,7 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
         ForexcomDiscoveryClient.__init__(instance, creds, client=client)
         instance._registry = registry or load_default_registry()
         instance._orders_cache = {}
+        instance._position_method_id_cache = None
         instance._instrument_by_market_id = {}
         for spec in instance._registry.list_instruments():
             for venue in spec.venues:
@@ -301,7 +319,32 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
         Some FOREX.com/CityIndex demo hosts no longer expose the documented
         /order/close route. On PositionMethodId=1/FIFO accounts, an opposite
         market order for the open quantity closes the oldest matching lot.
+        On any other position method (e.g. hedging) an opposite order would
+        OPEN a new position and double exposure, so this refuses unless the
+        account is confirmed FIFO.
         """
+        try:
+            method_id = self._account_position_method_id()
+        except Exception as exc:
+            raise ForexcomExchangeError(
+                "close route missing and account position method could not be "
+                f"verified; refusing opposite-market-order fallback: {exc}"
+            ) from exc
+        if method_id != _FIFO_POSITION_METHOD_ID:
+            raise ForexcomExchangeError(
+                "close route missing and trading account "
+                f"{self._trading_account_id} has PositionMethodId={method_id} "
+                "(not FIFO); an opposite market order would open new exposure "
+                "instead of closing, so the fallback is refused"
+            )
+        logger.warning(
+            "forexcom: /order/close unavailable — falling back to opposite "
+            "market order to close %s %s qty=%s on FIFO account %s",
+            position.side,
+            position.instrument,
+            close_qty,
+            self._trading_account_id,
+        )
         close_side = "sell" if position.side == "long" else "buy"
         return self.place_order(
             instrument=position.instrument,
@@ -310,6 +353,23 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
             order_type="market",
             strategy=strategy or position.strategy,
         )
+
+    def _account_position_method_id(self) -> int | None:
+        """Return the trading account's PositionMethodId (1 == FIFO), cached."""
+        if self._position_method_id_cache is None:
+            response = self._client.get(
+                "/useraccount/ClientAndTradingAccount",
+                headers=self._headers(authenticated=True),
+            )
+            self._raise_for_status(response, "fetch FOREX.com account metadata")
+            for account in response.json().get("TradingAccounts", []):
+                if str(account.get("TradingAccountId")) != str(self._trading_account_id):
+                    continue
+                method = account.get("PositionMethodId")
+                if method is not None:
+                    self._position_method_id_cache = int(method)
+                break
+        return self._position_method_id_cache
 
     def cancel_order(self, order_id: str) -> bool:
         self.create_session()
@@ -404,6 +464,41 @@ class ForexcomExchange(ForexcomDiscoveryClient, BaseExchange):
         payload = response.json()
         currency = str(payload.get("CurrencyIsoCode") or "AUD")
         return {currency: float(payload.get("TradableFunds") or payload.get("Cash") or 0.0)}
+
+    def get_quote(self, instrument: str) -> _Quote:
+        """Return the latest bid/offer quote for a canonical instrument id."""
+        self.create_session()
+        resolved = self._resolve_instrument(instrument)
+        return self._fetch_quote(resolved.market_id)
+
+    def fetch_recent_ticks(self, instrument: str, *, limit: int) -> list[Tick]:
+        """Return recent parsed price ticks for an instrument, oldest last."""
+        self.create_session()
+        resolved = self._resolve_instrument(instrument)
+        response = self._client.get(
+            f"/market/{resolved.market_id}/tickhistory",
+            params={"PriceTicks": max(1, int(limit))},
+            headers=self._headers(authenticated=True),
+        )
+        self._raise_for_status(response, f"fetch recent ticks for {instrument}")
+        ticks: list[Tick] = []
+        for tick in response.json().get("PriceTicks", []):
+            price = tick.get("Price") or tick.get("Bid") or tick.get("Offer")
+            try:
+                close = float(price)
+                bid = float(tick.get("Bid") or close)
+                offer = float(tick.get("Offer") or close)
+            except (TypeError, ValueError):
+                continue
+            ticks.append(
+                Tick(
+                    timestamp=self._parse_dt(tick.get("TickDate")),
+                    price=close,
+                    bid=bid,
+                    offer=offer,
+                )
+            )
+        return ticks
 
     def get_order(self, order_id: str) -> Order | None:
         cached = self._orders_cache.get(order_id)

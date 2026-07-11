@@ -3,6 +3,12 @@
 Validates a `pending_signal` against configured risk rules. On rejection it
 clears the pending signal and writes a `pending_notification` explaining
 why; on pass-through the signal continues to the HITL node unchanged.
+
+Protective exit signals bypass every rule here — including the halted flag.
+Exits are already part of the approved trade plan and always reduce exposure,
+so blocking one turns a stop into a suggestion (mirrors `route_after_risk` in
+edges.py). An exit that executes while halted is still surfaced loudly via a
+warning log and a `pending_notification` so the operator can see it happened.
 """
 
 from __future__ import annotations
@@ -153,6 +159,21 @@ def risk_check(state: TalimState) -> TalimState:
         return {}
 
     if sig.action == "exit":
+        if state.get("halted"):
+            # Deliberate: exits reduce exposure, so they run even while halted
+            # (see module docstring) — but never silently.
+            logger.warning(
+                "risk_check: HALTED but allowing protective exit %s %s (%s)",
+                sig.side,
+                sig.instrument,
+                sig.strategy,
+            )
+            return {
+                "pending_notification": (
+                    f"HALTED: allowed protective exit {sig.side} "
+                    f"{sig.instrument} ({sig.strategy})"
+                ),
+            }
         logger.info("risk_check: allowing protective exit %s %s", sig.side, sig.instrument)
         return {}
 

@@ -892,56 +892,40 @@ class Runtime:
         return data
 
     def _position_quote(self, instrument: str) -> Any | None:
-        if not hasattr(self.exchange, "_resolve_instrument") or not hasattr(self.exchange, "_fetch_quote"):
+        if not hasattr(self.exchange, "get_quote"):
             return None
         try:
-            resolved = self.exchange._resolve_instrument(instrument)  # noqa: SLF001
-            return self.exchange._fetch_quote(resolved.market_id)  # noqa: SLF001
+            return self.exchange.get_quote(instrument)
         except Exception:  # noqa: BLE001
             logger.warning("runtime: failed to fetch quote for open position %s", instrument, exc_info=True)
             return None
 
     def _position_tick_bars(self, instrument: str, *, total_bars: int) -> list[OHLCVBar]:
         """Return tick-derived bars for broker connectors without candle history."""
-        required = ("create_session", "_resolve_instrument", "_headers", "_raise_for_status", "_parse_dt")
-        if not all(hasattr(self.exchange, attr) for attr in required) or not hasattr(self.exchange, "_client"):
+        if not hasattr(self.exchange, "fetch_recent_ticks"):
             return []
         try:
-            self.exchange.create_session()
-            resolved = self.exchange._resolve_instrument(instrument)  # noqa: SLF001
-            response = self.exchange._client.get(  # noqa: SLF001
-                f"/market/{resolved.market_id}/tickhistory",
-                params={"PriceTicks": min(max(int(total_bars), 20), 500)},
-                headers=self.exchange._headers(authenticated=True),  # noqa: SLF001
+            ticks = self.exchange.fetch_recent_ticks(
+                instrument,
+                limit=min(max(int(total_bars), 20), 500),
             )
-            self.exchange._raise_for_status(  # noqa: SLF001
-                response,
-                f"fetch recent ticks for open-position chart {instrument}",
-            )
-            ticks = response.json().get("PriceTicks", [])
         except Exception:  # noqa: BLE001
             logger.warning("runtime: failed to fetch tick chart for open position %s", instrument, exc_info=True)
             return []
 
         out: list[OHLCVBar] = []
         for idx, tick in enumerate(ticks):
-            ts = self.exchange._parse_dt(tick.get("TickDate"))  # noqa: SLF001
+            ts = tick.timestamp
             if ts is None:
                 ts = datetime.now(timezone.utc) - timedelta(seconds=len(ticks) - idx)
-            price = tick.get("Price") or tick.get("Bid") or tick.get("Offer")
-            try:
-                close = float(price)
-                bid = float(tick.get("Bid") or close)
-                offer = float(tick.get("Offer") or close)
-            except (TypeError, ValueError):
-                continue
+            close = tick.price
             out.append(
                 OHLCVBar(
                     instrument=instrument,
                     timestamp=ts,
                     open=close,
-                    high=max(bid, offer, close),
-                    low=min(bid, offer, close),
+                    high=max(tick.bid, tick.offer, close),
+                    low=min(tick.bid, tick.offer, close),
                     close=close,
                     volume=0.0,
                     timeframe=self.config.pricefeed_timeframe,
@@ -1145,15 +1129,13 @@ class Runtime:
         if not positions or self.episodic is None:
             return positions
         try:
-            decisions = self.episodic.query_decisions()
+            decisions = self.episodic.query_decisions(outcome="pending")
         except Exception:  # noqa: BLE001
             logger.warning("runtime: failed to query decision memory for exit levels", exc_info=True)
             return positions
 
         pending_by_key: dict[tuple[str, str], dict[str, Any]] = {}
         for decision in decisions:
-            if decision.get("outcome") != "pending":
-                continue
             instrument = str(decision.get("instrument") or "")
             side = str(decision.get("side") or "")
             if instrument and side:

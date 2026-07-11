@@ -26,7 +26,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--end-year", type=int, required=True, help="Inclusive end year")
     parser.add_argument("--hours", default="0,8,16", help="Comma-separated UTC hours to probe per day")
     parser.add_argument("--days-per-month", type=int, default=10, help="Probe first N calendar days of each month")
-    parser.add_argument("--weekdays-only", action="store_true", default=True, help="Skip Saturdays/Sundays when probing")
+    parser.add_argument(
+        "--weekdays-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip Saturdays/Sundays when probing (--no-weekdays-only to include them)",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=8.0)
     parser.add_argument("--sleep-seconds", type=float, default=0.5, help="Delay between probes to avoid Dukascopy throttling")
     parser.add_argument("--output", default="data/backtest/dukascopy-coverage.json")
@@ -76,7 +81,7 @@ def _probe_hour(symbol: str, hour: datetime, *, timeout_seconds: float) -> str:
     return f"error:http{status}"
 
 
-def _scan_symbol(symbol: str, *, start_year: int, end_year: int, hours: list[int], days_per_month: int, timeout_seconds: float, sleep_seconds: float) -> dict:
+def _scan_symbol(symbol: str, *, start_year: int, end_year: int, hours: list[int], days_per_month: int, timeout_seconds: float, sleep_seconds: float, weekdays_only: bool = True) -> dict:
     available: list[str] = []
     counts = {"available": 0, "missing": 0, "empty": 0, "error": 0}
     monthly: dict[str, str] = {}
@@ -87,7 +92,7 @@ def _scan_symbol(symbol: str, *, start_year: int, end_year: int, hours: list[int
             _, last_day = calendar.monthrange(year, month)
             for day in range(1, min(days_per_month, last_day) + 1):
                 probe_date = datetime(year, month, day, tzinfo=UTC)
-                if probe_date.weekday() >= 5:
+                if weekdays_only and probe_date.weekday() >= 5:
                     continue
                 for hour_num in hours:
                     hour = datetime(year, month, day, hour_num, tzinfo=UTC)
@@ -151,6 +156,7 @@ def main() -> int:
                 days_per_month=max(1, args.days_per_month),
                 timeout_seconds=args.timeout_seconds,
                 sleep_seconds=args.sleep_seconds,
+                weekdays_only=args.weekdays_only,
             )
         )
     output = Path(args.output)

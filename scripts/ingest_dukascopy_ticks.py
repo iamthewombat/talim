@@ -29,6 +29,9 @@ import pandas as pd
 
 DUKASCOPY_BASE_URL = "https://datafeed.dukascopy.com/datafeed"
 RECORD = struct.Struct(">IIIff")
+# Resume-state flush cadence: at worst this many hours are re-fetched after a
+# hard crash (the finally-flush covers normal exits and exceptions).
+STATE_FLUSH_EVERY_HOURS = 100
 TIMEFRAME_MAP = {
     "1m": "1min",
     "5m": "5min",
@@ -307,6 +310,23 @@ def main() -> int:
     if start >= end:
         raise ValueError("--start must be before --end")
 
+    if args.append:
+        # Appended bars are rebuilt from only the requested window, and the
+        # merge dedupe keeps the newest row per (timestamp, price_type) — so a
+        # partial re-pull of a coarse bar REPLACES the previously complete bar.
+        if args.timeframe == "1d":
+            print(
+                "WARNING: --append with --timeframe 1d: re-pulling a partial day "
+                "replaces the existing full-day bar with one built from only the "
+                "re-pulled hours. Re-pull whole days, or aggregate daily bars "
+                "from a finer-timeframe parquet instead."
+            )
+        if start != _floor_hour(start) or end != _floor_hour(end):
+            print(
+                "WARNING: --append with a start/end not aligned to the hour can "
+                "rebuild partial bars that replace complete ones."
+            )
+
     instrument = args.instrument or DEFAULT_SYMBOL_MAP.get(args.symbol.upper(), f"{args.symbol}.proxy")
     output = Path(args.output) if args.output else _default_output(instrument, args.timeframe, args.price_type)
     manifest = Path(args.manifest) if args.manifest else output.with_name(f"{output.stem}-manifest.json")
@@ -318,48 +338,70 @@ def main() -> int:
 
     tick_frames: list[pd.DataFrame] = []
     stats = DownloadStats()
-    for hour in _hour_cursor(start, end):
-        hour_key = _state_key(hour)
-        if not args.no_resume and hour_key in completed_before:
-            continue
-        stats = stats.add(attempted_hours=1)
-        try:
-            payload = _fetch_hour(args.symbol, hour, timeout_seconds=args.timeout_seconds)
-        except Exception as exc:  # network/provider errors should not corrupt partial imports
-            print(f"{hour.isoformat()} fetch error: {exc}")
-            state.setdefault("fetch_error_hours", {})[hour_key] = str(exc)
-            _write_state(state_path, state)
-            stats = stats.add(missing_hours=1)
-            continue
-        if payload is None:
-            _append_unique(state, "missing_hours", hour_key)
-            _write_state(state_path, state)
-            stats = stats.add(missing_hours=1)
-            continue
-        if payload == b"":
-            _append_unique(state, "empty_hours", hour_key)
-            _write_state(state_path, state)
-            stats = stats.add(empty_hours=1)
-            continue
-        try:
-            ticks = _decode_ticks(payload, hour=hour, scale=scale, price_type=args.price_type)
-        except Exception as exc:
-            print(f"{hour.isoformat()} decode error: {exc}")
-            _append_unique(state, "decode_error_hours", hour_key)
-            _write_state(state_path, state)
-            stats = stats.add(decode_errors=1)
-            continue
-        if ticks.empty:
-            _append_unique(state, "empty_hours", hour_key)
-            _write_state(state_path, state)
-            stats = stats.add(empty_hours=1)
-            continue
-        tick_frames.append(ticks)
-        _append_unique(state, "completed_hours", hour_key)
+    # Rewriting the whole (growing) state JSON after every hour is O(n^2) over
+    # a multi-year pull, so flush every N dirty hours and always on exit.
+    pending_state_writes = 0
+
+    def _flush_state(*, force: bool = False) -> None:
+        nonlocal pending_state_writes
+        if pending_state_writes == 0:
+            return
+        if not force and pending_state_writes < STATE_FLUSH_EVERY_HOURS:
+            return
         _write_state(state_path, state)
-        stats = stats.add(downloaded_hours=1, ticks=len(ticks))
-        if args.sleep_seconds > 0:
-            time.sleep(args.sleep_seconds)
+        pending_state_writes = 0
+
+    try:
+        for hour in _hour_cursor(start, end):
+            hour_key = _state_key(hour)
+            if not args.no_resume and hour_key in completed_before:
+                continue
+            stats = stats.add(attempted_hours=1)
+            try:
+                payload = _fetch_hour(args.symbol, hour, timeout_seconds=args.timeout_seconds)
+            except Exception as exc:  # network/provider errors should not corrupt partial imports
+                print(f"{hour.isoformat()} fetch error: {exc}")
+                state.setdefault("fetch_error_hours", {})[hour_key] = str(exc)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(missing_hours=1)
+                continue
+            if payload is None:
+                _append_unique(state, "missing_hours", hour_key)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(missing_hours=1)
+                continue
+            if payload == b"":
+                _append_unique(state, "empty_hours", hour_key)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(empty_hours=1)
+                continue
+            try:
+                ticks = _decode_ticks(payload, hour=hour, scale=scale, price_type=args.price_type)
+            except Exception as exc:
+                print(f"{hour.isoformat()} decode error: {exc}")
+                _append_unique(state, "decode_error_hours", hour_key)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(decode_errors=1)
+                continue
+            if ticks.empty:
+                _append_unique(state, "empty_hours", hour_key)
+                pending_state_writes += 1
+                _flush_state()
+                stats = stats.add(empty_hours=1)
+                continue
+            tick_frames.append(ticks)
+            _append_unique(state, "completed_hours", hour_key)
+            pending_state_writes += 1
+            _flush_state()
+            stats = stats.add(downloaded_hours=1, ticks=len(ticks))
+            if args.sleep_seconds > 0:
+                time.sleep(args.sleep_seconds)
+    finally:
+        _flush_state(force=True)
 
     ticks = pd.concat(tick_frames, ignore_index=True) if tick_frames else pd.DataFrame(columns=["timestamp", "price", "volume"])
     if not ticks.empty:

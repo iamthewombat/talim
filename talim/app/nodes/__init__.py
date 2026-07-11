@@ -71,7 +71,9 @@ def execute(state: TalimState) -> TalimState:
         return update
 
     closing_position = None
-    realised_pnl = 0.0
+    # None (not 0.0) when the fill price is unknown, so a missing exit price
+    # is distinguishable from a genuine break-even trade in the stats.
+    realised_pnl: float | None = None
     try:
         if sig.action == "exit":
             position = _matching_position(sig, list(state.get("active_positions") or []))
@@ -179,7 +181,7 @@ def execute(state: TalimState) -> TalimState:
                 outcome="closed" if sig.action == "exit" else "pending",
                 approved=True,
                 signal_type=sig.action,
-                pnl=realised_pnl,
+                pnl=realised_pnl if sig.action == "exit" else 0.0,
                 atr_ratio=state.get("atr_ratio"),
                 action="approve",
                 notes=f"order_id={order.order_id} order_side={order.side} qty={order.qty}",
@@ -191,6 +193,7 @@ def execute(state: TalimState) -> TalimState:
                 ctx.episodic.close_pending_entries(
                     instrument=sig.instrument,
                     side=sig.side,
+                    strategy=sig.strategy or None,
                 )
     except Exception as e:  # noqa: BLE001
         logger.exception("execute: order placement failed: %s", e)

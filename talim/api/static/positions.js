@@ -7,6 +7,11 @@ const state = {
   chartData: null,
   chartError: null,
   chart: null,
+  candleSeries: null,
+  emaFastSeries: null,
+  emaSlowSeries: null,
+  priceLines: [],
+  refreshing: false,
 };
 
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
@@ -186,72 +191,110 @@ function seriesData(chartData) {
 function addPriceLine(series, price, title, color) {
   const value = asNumber(price);
   if (value == null) return;
-  series.createPriceLine({ price: value, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title });
+  state.priceLines.push(series.createPriceLine({ price: value, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title }));
+}
+
+function chartHeight() {
+  return Math.max(360, Math.min(560, Math.floor(window.innerHeight * 0.58)));
+}
+
+function destroyChart() {
+  if (state.chart) { try { state.chart.remove(); } catch (_) { /* already gone */ } }
+  state.chart = null;
+  state.candleSeries = null;
+  state.emaFastSeries = null;
+  state.emaSlowSeries = null;
+  state.priceLines = [];
+}
+
+function renderChartMessage(container, cls, text) {
+  destroyChart();
+  clear(container);
+  container.appendChild(el("div", { class: cls, text }));
 }
 
 function renderChart(fit = true) {
   const container = document.getElementById("position-chart");
   const meta = document.getElementById("chart-meta");
   const warnings = document.getElementById("chart-warnings");
-  clear(container); clear(meta); clear(warnings);
-  state.chart = null;
-  if (state.chartError) { container.appendChild(el("div", { class: "chart-empty error", text: state.chartError })); return; }
+  clear(meta); clear(warnings);
+  if (state.chartError) { renderChartMessage(container, "chart-empty error", state.chartError); return; }
   const data = state.chartData;
-  if (!data) { container.appendChild(el("div", { class: "chart-empty", text: "Select a position…" })); return; }
+  if (!data) { renderChartMessage(container, "chart-empty", "Select a position…"); return; }
   meta.appendChild(el("span", { text: `${data.status} · ${data.source}` }));
   meta.appendChild(el("span", { text: `${data.timeframe} · ${(data.candles || []).length} candles` }));
   for (const warning of data.warnings || []) warnings.appendChild(el("div", { class: "warn", text: warning }));
   const { candles, emaFast, emaSlow } = seriesData(data);
-  if (!candles.length) { container.appendChild(el("div", { class: "chart-empty", text: "No recent candles available." })); return; }
-  if (typeof LightweightCharts === "undefined") { container.appendChild(el("div", { class: "chart-empty error", text: "Chart library failed to load." })); return; }
+  if (!candles.length) { renderChartMessage(container, "chart-empty", "No recent candles available."); return; }
+  if (typeof LightweightCharts === "undefined") { renderChartMessage(container, "chart-empty error", "Chart library failed to load."); return; }
   try {
-    const chart = LightweightCharts.createChart(container, {
-      width: container.clientWidth || 800,
-      height: Math.max(360, Math.min(560, Math.floor(window.innerHeight * 0.58))),
-      layout: { background: { color: "#171a21" }, textColor: "#d7dbe0" },
-      grid: { vertLines: { color: "#242a35" }, horzLines: { color: "#242a35" } },
-      rightPriceScale: { borderColor: "#2a2f3a" },
-      timeScale: { borderColor: "#2a2f3a", timeVisible: true },
-    });
-    const candleSeries = chart.addCandlestickSeries({ upColor: "#3fb950", downColor: "#f85149", borderVisible: false, wickUpColor: "#3fb950", wickDownColor: "#f85149" });
-    candleSeries.setData(candles);
-    if (emaFast.length) chart.addLineSeries({ color: "#4fa3ff", lineWidth: 1 }).setData(emaFast);
-    if (emaSlow.length) chart.addLineSeries({ color: "#d29922", lineWidth: 1 }).setData(emaSlow);
-    addPriceLine(candleSeries, data.levels && data.levels.entry, "entry", "#4fa3ff");
-    addPriceLine(candleSeries, data.levels && data.levels.mark, "mark", "#d29922");
-    addPriceLine(candleSeries, data.levels && data.levels.stop, "stop", "#f85149");
-    addPriceLine(candleSeries, data.levels && data.levels.target, "target", "#3fb950");
-    if (fit) chart.timeScale().fitContent();
-    state.chart = chart;
+    // Reuse the chart instance across refreshes so the operator's zoom/pan
+    // survives the 15s polling loop; only the series data is replaced.
+    if (!state.chart) {
+      clear(container);
+      state.chart = LightweightCharts.createChart(container, {
+        width: container.clientWidth || 800,
+        height: chartHeight(),
+        layout: { background: { color: "#171a21" }, textColor: "#d7dbe0" },
+        grid: { vertLines: { color: "#242a35" }, horzLines: { color: "#242a35" } },
+        rightPriceScale: { borderColor: "#2a2f3a" },
+        timeScale: { borderColor: "#2a2f3a", timeVisible: true },
+      });
+      state.candleSeries = state.chart.addCandlestickSeries({ upColor: "#3fb950", downColor: "#f85149", borderVisible: false, wickUpColor: "#3fb950", wickDownColor: "#f85149" });
+      state.emaFastSeries = state.chart.addLineSeries({ color: "#4fa3ff", lineWidth: 1 });
+      state.emaSlowSeries = state.chart.addLineSeries({ color: "#d29922", lineWidth: 1 });
+      fit = true;
+    }
+    state.candleSeries.setData(candles);
+    state.emaFastSeries.setData(emaFast);
+    state.emaSlowSeries.setData(emaSlow);
+    for (const line of state.priceLines) { try { state.candleSeries.removePriceLine(line); } catch (_) { /* stale */ } }
+    state.priceLines = [];
+    addPriceLine(state.candleSeries, data.levels && data.levels.entry, "entry", "#4fa3ff");
+    addPriceLine(state.candleSeries, data.levels && data.levels.mark, "mark", "#d29922");
+    addPriceLine(state.candleSeries, data.levels && data.levels.stop, "stop", "#f85149");
+    addPriceLine(state.candleSeries, data.levels && data.levels.target, "target", "#3fb950");
+    if (fit) state.chart.timeScale().fitContent();
   } catch (err) {
     console.error("position chart render failed", err);
-    clear(container);
-    container.appendChild(el("div", { class: "chart-empty error", text: `Chart render failed: ${err.message || err}` }));
+    renderChartMessage(container, "chart-empty error", `Chart render failed: ${err.message || err}`);
   }
 }
 
 async function selectPosition(id) {
+  const changed = id !== state.selectedId;
   state.selectedId = id;
-  state.chartData = null;
-  state.chartError = null;
-  renderPositions(); renderDetail(); renderChart();
+  if (changed) {
+    state.chartData = null;
+    state.chartError = null;
+    destroyChart();
+    renderPositions(); renderDetail(); renderChart();
+  }
   try {
     state.chartData = await api(`/talim/operator/positions/${encodeURIComponent(id)}/chart?bars=240`);
+    state.chartError = null;
   } catch (err) { state.chartError = err.message; }
-  renderChart();
+  renderDetail();
+  renderChart(changed);
 }
 
 async function refreshAll() {
-  await refreshSession(); syncAuthUi();
-  if (!state.authenticated) { renderLocked(); return; }
+  if (state.refreshing) return;
+  state.refreshing = true;
   try {
+    await refreshSession(); syncAuthUi();
+    if (!state.authenticated) { renderLocked(); return; }
     state.dashboard = await api("/talim/operator/positions/dashboard");
     const positions = state.dashboard.positions || [];
     if (!state.selectedId && positions.length) state.selectedId = String(positions[0].position_id || "");
     renderSummary(); renderPositions(); renderDetail();
     if (state.selectedId) await selectPosition(state.selectedId); else renderChart();
     document.getElementById("last-refresh").textContent = new Date().toLocaleTimeString();
-  } catch (err) { renderFatal(err.message); }
+  } catch (err) {
+    renderFatal(err.message);
+  } finally {
+    state.refreshing = false;
+  }
 }
 
 function renderLocked() {
@@ -273,7 +316,13 @@ document.getElementById("signin-btn").addEventListener("click", async () => {
   try { await loginWithSecret(secret); await refreshAll(); } catch (err) { window.alert(err.message); }
 });
 document.getElementById("refresh-btn").addEventListener("click", refreshAll);
-document.getElementById("fit-chart-btn").addEventListener("click", () => renderChart(true));
-window.addEventListener("resize", () => { if (state.chart) renderChart(false); });
+document.getElementById("fit-chart-btn").addEventListener("click", () => {
+  if (state.chart) state.chart.timeScale().fitContent(); else renderChart(true);
+});
+window.addEventListener("resize", () => {
+  if (!state.chart) return;
+  const container = document.getElementById("position-chart");
+  state.chart.applyOptions({ width: container.clientWidth || 800, height: chartHeight() });
+});
 refreshAll();
 setInterval(refreshAll, 15000);

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Response
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -472,7 +472,7 @@ def create_app(
     )
     def operator_position_chart(
         position_id: str,
-        bars: int = 240,
+        bars: int = Query(default=240, ge=20, le=500),
     ) -> OperatorPositionChartResponse:
         """Return recent chart candles for one open position."""
         rt = require_runtime()
