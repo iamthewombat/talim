@@ -71,10 +71,15 @@ bypass it short of using a different account.
     --instrument US500.cash --timeframe 5m --bars 4000
 ```
 
-FOREX.com's `barhistory` endpoint caps at ~4000 bars per call and
-does not currently accept a `from` parameter in our client. Deeper
-history requires extending `ingest_forexcom_prices.py` with
-time-windowed pagination.
+FOREX.com's `barhistory` endpoint caps at ~4000 bars per call, but
+`ingest_forexcom_prices.py` now pages through history with
+`--start`/`--end`/`--months` (chunked `fetch_bars_before` requests,
+`--chunk-size` up to 4000, `--sleep-seconds` between pages), e.g.:
+
+```bash
+.venv/bin/python scripts/ingest_forexcom_prices.py \
+    --instrument US500.cash --timeframe 5m --months 6 --append
+```
 
 ## 3. Run the baseline backtests
 
@@ -136,9 +141,10 @@ finished system. Tuning lives in a separate WP.
 - **IG weekly allowance.** If the allowance is exhausted, FOREX.com is
   the usable fallback. Re-run against IG when the quota resets to
   cross-verify.
-- **FOREX.com 4000-bar cap.** The 5m slice only covers ~2.5 weeks;
-  Sharpe and max-DD numbers on 5m are under-powered until pagination
-  lands.
+- **FOREX.com 4000-bar cap (per request).** Pagination has landed
+  (`--start`/`--end`/`--months`), but the committed 5m baseline still
+  reflects the original ~2.5-week slice — re-ingest a deeper 5m window
+  before re-recording baselines so 5m Sharpe/max-DD numbers are powered.
 - **No 1d slice from FOREX.com yet.** `build_au200_dataset.py` fills
   1d from IG; FOREX.com ingest is 5m/1h only because daily data from
   FOREX.com has not been wired through the price feed's timeframe
