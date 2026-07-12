@@ -20,6 +20,10 @@
 - Default FastAPI startup uses `talim.app.runtime.bootstrap_runtime()` to wire
   exchange/feed/strategy/risk/checkpoint contexts. If adding runtime env vars,
   update `.env.example`, `docker-compose.yml`, and the exchange setup docs.
+- Active roadmap/progress files are indexed in `CENTRAL_PROGRESS.md`. When
+  creating a new durable Talim planning, progress, checklist, or roadmap
+  markdown file, append it to that central index in the same session with status
+  and pickup guidance.
 - Use `scripts/run_demo_execution.py` as the local proof that scan -> HITL ->
   approve -> execute -> memory -> reconcile still works before attempting real
   broker demo execution.
