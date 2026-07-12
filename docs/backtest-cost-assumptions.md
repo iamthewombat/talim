@@ -87,6 +87,16 @@ backtest.
   worse than one standard slippage increment. The values chosen are
   averages, not tail cases.
 - **Existing recorded baselines** (`docs/backtest-baselines/`) were captured
-  frictionless before WP-86. Re-baseline with `--costs-venue` before
-  comparing costed runs against them (see
-  `docs/backtest-comparison-rules.md`).
+  frictionless before WP-86. Re-record them with standard costs on a machine
+  that has the ingested datasets (deploy host):
+
+  ```bash
+  python scripts/rerecord_baselines.py
+  ```
+
+  This runs every entry in `config/backtest_baselines.json`, records each
+  variant to the backtest history DB (`triggered_by="baseline"`), and writes
+  a dated snapshot to `docs/backtest-baselines/baselines-<date>.json` —
+  commit that file. Use `--allow-partial` if one venue's data is not
+  ingested yet. See `docs/backtest-comparison-rules.md` for how baselines
+  are used.

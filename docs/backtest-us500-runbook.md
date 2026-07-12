@@ -107,12 +107,25 @@ Drop `--no-history` to persist runs into the WP-68 history store
 `$TALIM_BACKTEST_HISTORY_DB`). Recorded runs are queryable via
 `GET /talim/operator/backtests`.
 
-## 4. Baseline snapshot (2026-04-19)
+## 4. Baseline snapshots
 
-Canonical default-parameter numbers are committed under
-`docs/backtest-baselines/us500-2026-04-19.json`. Re-run step 3 after
-any change to strategy defaults, ingest pipeline, or the fill-model
-in `talim/backtest/engine.py`, and update the snapshot.
+The original frictionless default-parameter numbers are committed under
+`docs/backtest-baselines/us500-2026-04-19.json` (superseded once a costed
+snapshot lands). Since WP-86, baselines are re-recorded in one step with
+standard venue costs applied:
+
+```bash
+.venv/bin/python scripts/rerecord_baselines.py
+```
+
+This runs every entry in `config/backtest_baselines.json` (US500 momentum +
+mean-reversion on 5m/1h, AU200 momentum on 1h), records each variant to the
+history DB with `triggered_by="baseline"`, and writes
+`docs/backtest-baselines/baselines-<date>.json` — commit that file. Use
+`--allow-partial` if one venue's dataset is not ingested yet.
+
+Re-run after any change to strategy defaults, ingest pipeline, cost
+assumptions, or the fill-model in `talim/backtest/engine.py`.
 
 Default-parameter Sharpe is negative on both strategies and both
 timeframes; this is the starting point for parameter sweeps, not a

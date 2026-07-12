@@ -2,7 +2,7 @@
 
 Agentic trading assistant powered by LangGraph. Talim monitors markets, detects regime changes, generates trade signals through pluggable strategies, routes them through risk checks and human-in-the-loop approval, executes against an exchange, and answers questions through a conversational bridge — all orchestrated as a stateful, checkpointed graph with persistent memory.
 
-**Status:** 42 work packages complete · 468 tests green · all 7 PoC success criteria verified ([docs/poc-verification.md](docs/poc-verification.md)).
+**Status:** 50+ work packages complete · 686 tests green · all 7 PoC success criteria verified ([docs/poc-verification.md](docs/poc-verification.md)). Work-package status lives in [PROGRESS.md](PROGRESS.md).
 
 ## Architecture
 
@@ -42,15 +42,15 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 │   ┌────────────────────────────────────────────────────────────────────┐   │
 │   │                      LANGGRAPH BRAIN (StateGraph)                  │   │
 │   │                                                                    │   │
-│   │    cron_trigger ──▶ signal_scanner ───┐                            │   │
-│   │                                       ▼                            │   │
-│   │    bridge_message ─▶ converse ─▶ router ─┬─▶ risk_check            │   │
-│   │                                          │        │                │   │
-│   │                                          │        ▼                │   │
-│   │                                          │   hitl_interrupt        │   │
-│   │                                          │     [PAUSE]             │   │
-│   │                                          │        │                │   │
-│   │                                          │        ▼                │   │
+│   │    cron_trigger ──▶ signal_scanner ─▶ position_monitor ──┐         │   │
+│   │                                                          ▼         │   │
+│   │    bridge_message ─▶ converse ─────▶ router ─┬─▶ risk_check        │   │
+│   │                                          │      │        │         │   │
+│   │                                          │  (entries) (prot.exits) │   │
+│   │                                          │      ▼        │         │   │
+│   │                                          │ hitl_interrupt│         │   │
+│   │                                          │   [PAUSE]     │         │   │
+│   │                                          │      ▼        ▼         │   │
 │   │                                          │     execute ─▶ END      │   │
 │   │                                          │                         │   │
 │   │                                          ├─▶ strategy_update ─▶ notify │
@@ -137,7 +137,16 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
         └─────────┘ └─────────┘ └────────────┘
 ```
 
-### HITL sequence (signal → Discord → resume)
+### HITL sequence (signal → alert → resume)
+
+The PoC Discord reaction path below still works, but the production flow is:
+an OpenClaw watcher polls `/talim/operator/pending` and posts alerts to
+Discord; the operator approves from the dashboard signal page or via
+OpenClaw commands; and every approval is re-validated at decision time
+(fresh bars, strategy-specific validation, re-run risk checks) before
+execution — stale or invalidated signals are blocked, not executed
+(WP-75–WP-80). Protective exit signals from `position_monitor` skip HITL
+entirely and go straight to execution after risk checks.
 
 ```
  scanner     router    risk_check  hitl_interrupt   Discord        human      execute   exchange
@@ -212,7 +221,7 @@ Agentic trading assistant powered by LangGraph. Talim monitors markets, detects 
 
 ### Current Venue Status
 
-- The current CFD path is AU200 via `ig` or `forexcom`, using the broker-neutral CFD registry and adapter layer.
+- The current CFD path targets index CFDs (`US500.cash`, `AU200.cash`) via `ig` or `forexcom`, using the broker-neutral CFD registry and adapter layer. The live runtime currently scans US500 through the FOREX.com feed.
 - Binance credentials are not required for the AU200 CFD path. `BINANCE_API_KEY` / `BINANCE_API_SECRET` are used only when `TALIM_EXCHANGE_MODE=testnet|live` and `TALIM_EXCHANGE_NAME=binance`.
 - `TALIM_PRICEFEED=binance` selects the public Binance ccxt.pro feed scaffold and does not consume the Binance API key/secret.
 - The default runtime remains `TALIM_EXCHANGE_MODE=mock`; adding broker credentials to `.env` does not activate them unless the exchange mode/name and execution context are wired accordingly.
@@ -255,12 +264,28 @@ of reaching into checkpoints directly:
 
 - `GET /talim/operator/status`
 - `GET /talim/operator/pending?thread_id=cron-main`
-- `POST /talim/operator/decision`
+- `POST /talim/operator/decision` (optionally signal-id-scoped; approvals are re-validated before execution)
 - `GET /talim/operator/positions`
-- `GET /talim/operator/decisions`
+- `GET /talim/operator/decisions` (entry/exit rows are explicitly paired)
+- `GET /talim/operator/strategies` + `POST /talim/operator/strategies/{name}/enable|disable`
+- `GET /talim/operator/backtests` + `GET /talim/operator/backtests/{id}`
+- `GET /talim/operator/signals/{signal_id}` + `GET /talim/operator/signals/{signal_id}/chart`
 - `POST /talim/sync?thread_id=cron-main`
 
 See [docs/openclaw-operator-interface.md](docs/openclaw-operator-interface.md).
+
+### Operator Dashboard
+
+A static single-page dashboard is mounted at `/talim/dashboard/` (runtime
+status, positions, pending HITL approve/reject, strategies, decisions,
+backtest history, P&L), with a mobile-friendly signal detail page at
+`/talim/dashboard/signal.html?signal=<signal_id>` (candlestick chart with
+EMA overlays, entry/stop/target lines, live validation status) and an
+open-positions page at `/talim/dashboard/positions.html`. Signals are
+durable rows with stable ids and deep links; every pending signal carries a
+strategy-specific validation status. Discord receives push notifications on
+position open/close via `TALIM_DISCORD_POSITION_WEBHOOK`. See
+[docs/operator-dashboard.md](docs/operator-dashboard.md).
 
 ### OpenClaw Host Deployment
 
@@ -282,9 +307,10 @@ approve/reject decision. See [docs/runtime-sync.md](docs/runtime-sync.md).
 The full graph topology:
 
 ```
-cron_trigger ──▶ signal_scanner ──┐
-                                  ▼
-bridge_message ──▶ converse ──▶ router ──┬─▶ risk_check ─▶ hitl_interrupt ─[pause]─▶ execute ─▶ END
+cron_trigger ──▶ signal_scanner ──▶ position_monitor ──┐
+                                                       ▼
+bridge_message ──▶ converse ──▶ router ──┬─▶ risk_check ──┬─▶ hitl_interrupt ─[pause]─▶ execute ─▶ END
+                                         │                └─▶ execute ─▶ END  (protective exits skip HITL)
                                          ├─▶ strategy_update ─▶ notify ─▶ END
                                          ├─▶ backtest_run ─▶ notify ─▶ END
                                          ├─▶ notify ─▶ END
@@ -295,7 +321,8 @@ Real implementations of every node:
 - **signal_scanner** — pulls bars from the configured feed, computes ATR + regime fingerprint, runs each active strategy via the same `on_bar` interface used by backtests, writes a `pending_signal` if any strategy fires
 - **router** + **edges** — deterministic 5-branch routing with priority (signal > regime > backtest > message > end)
 - **risk_check** — enforces qty, total exposure, daily drawdown, same-instrument stacking, and correlation rules; blocked signals are routed through `notify` with the rejection reason
-- **hitl_interrupt** — formats the signal into an embed-ready message and pauses the graph (`interrupt_after`); resumes via `talim.app.resume.resume_graph(thread_id, approved)` which injects `signal_approved` into checkpointed state
+- **position_monitor** — checks open positions against strategy stop/target levels between scans and emits protective `exit` signals that bypass HITL after risk checks
+- **hitl_interrupt** — formats the signal into an embed-ready message and pauses the graph (`interrupt_after`); operator approvals go through `Runtime.resume`, which refreshes broker state and bars, re-runs strategy-specific signal validation and risk checks, and only then executes — invalid/stale approvals are blocked and recorded on the durable signal row (WP-78)
 - **strategy_update** — calls Claude with a strategy reasoning prompt, parses a JSON proposal, merges it into `strategy_params`
 - **backtest_run** — runs the on_bar replay engine over multiple param variants and writes a sorted-by-Sharpe `backtest_result` list
 - **converse** — parses an inbound message, activates referenced strategies, optionally classifies intent via Ollama
@@ -314,13 +341,19 @@ Thin wrappers exposed over an MCP stdio server: `get_positions`, `get_pnl`, `run
 ### Backtest Engine (`talim/backtest/`)
 - `run_backtest(strategy_name, param_variants, ...)` replays bars through the strategy's own `on_bar` method (live/backtest parity)
 - Per-trade exit simulation: stop or target — whichever the next bar's high/low touches first
-- `compute_metrics`: net PnL, Sharpe, max drawdown, win rate, trade count
-- Parquet data loader (per-day or single-file layouts)
+- Position sizing models (`fixed_qty` / `risk_pct` with caps and compounding) via `BacktestSizingConfig`
+- Standardised cost model (WP-86): per-venue spread/slippage/commission assumptions from `config/backtest_costs.json`, applied as adverse fills against mid-based bars — see [docs/backtest-cost-assumptions.md](docs/backtest-cost-assumptions.md)
+- `compute_metrics`: net PnL, Sharpe, Sortino, max drawdown, win rate, profit factor, trade count
+- Parquet data loader (per-day or single-file layouts; fails loudly on missing timeframes, wrong price types, or duplicate bars)
+- Run history (`BacktestHistory`, SQLite) — every CLI/node/baseline run is recorded and queryable via the operator API
+- Baseline snapshots: `scripts/rerecord_baselines.py` re-records the standard baseline set with costs applied ([docs/backtest-comparison-rules.md](docs/backtest-comparison-rules.md))
 - Optional vectorbt fast path (`talim/backtest/vectorbt_engine.py`) selectable via `BacktestRequest.engine="vectorbt"`, with graceful fallback to on_bar when the package isn't installed
 - Wired into the graph as the `backtest_run` node
 
 ### Data Ingestion (`scripts/`)
 - `scripts/ingest_databento.py` + `scripts/ingest_tardis.py` — argparse CLIs with idempotent per-day skip, injectable `fetch_fn` for tests
+- `scripts/ingest_forexcom_prices.py` — FOREX.com REST bar history → Parquet with dataset manifests
+- Dukascopy deep-history backfill (WP-74): `scripts/ingest_dukascopy_ticks.py` (BI5 tick download → OHLCV Parquet with resume state and raw-hour caching), `build_dukascopy_canonical_bars.py`, `scan_dukascopy_coverage.py`, `retry_dukascopy_fetch_errors.py`, `run_dukascopy_year_pull_and_retry.py`
 - Nightly cron entry in `scripts/cron.txt`
 
 ### LLM Layer (`talim/llm/`)
@@ -367,7 +400,7 @@ strategies/
 └── mean-reversion-US500/
 tests/
 ├── e2e/test_market_day.py   # Full simulated market day
-└── test_*.py                # 16 unit/integration files (266 tests)
+└── test_*.py                # 56 unit/integration files (686 tests)
 docker-compose.yml · Dockerfile · nginx/nginx.conf · scripts/
 ```
 
@@ -379,17 +412,16 @@ Requires Python 3.11+.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pip install langgraph-checkpoint-sqlite pyarrow requests
 ```
 
 ## Running Tests
 
 ```bash
-pytest tests/                      # full suite (302 tests)
+pytest tests/                      # full suite (686 tests)
 pytest tests/e2e/test_market_day.py -v   # simulated market day only
 ```
 
-No external services required — Redis tests use `fakeredis`, SQLite uses tmp dirs, the LLM is stubbed via `MockLLMClient`, and the price feed/exchange/discord layers all have in-memory mocks.
+No external services required — Redis tests use `fakeredis`, SQLite uses tmp dirs, the LLM is stubbed via `MockLLMClient`, and the price feed/exchange/discord layers all have in-memory mocks. The backup tests shell out to the `sqlite3` CLI, so have it installed (`apt install sqlite3`).
 
 ## Running the Stack
 

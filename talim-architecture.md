@@ -143,10 +143,11 @@ class TalimState(TypedDict):
 
 | Node | Entry point | What it does |
 |------|------------|--------------|
-| `signal_scanner` | Cron | Pulls latest bars, computes ATR, regime fingerprint, checks signal thresholds |
+| `signal_scanner` | Cron | Pulls latest bars, computes ATR, regime fingerprint, checks signal thresholds; WP-85 guardrails suppress stale crosses, same-bar duplicates, and momentum entries in ranging regimes |
+| `position_monitor` | After scanner | Checks open positions against strategy stop/target levels and emits protective `exit` signals |
 | `converse` | Bridge POST | Parses incoming message, loads relevant strategy markdowns into state |
-| `risk_check` | After router | Validates position limits, max drawdown, correlation checks before approving a trade |
-| `execute` | After HITL approval | Calls exchange MCP tool, updates state with fill details |
+| `risk_check` | After router | Validates position limits, max drawdown, correlation checks before approving a trade; applies lighter rules to protective exits |
+| `execute` | After HITL approval (entries) or directly after risk_check (protective exits) | Places the order via the injected exchange (`close_position` for exits), updates state with fill details |
 
 **LLM-routed nodes:**
 
@@ -154,7 +155,7 @@ class TalimState(TypedDict):
 |------|----------|--------------|
 | `router` | Ollama (fast) | Reads current state, decides which branch to take |
 | `strategy_update` | Claude | Reads strategy MD, proposes param changes, drafts Discord alert |
-| `backtest_run` | — | Triggers vectorbt locally or QuantConnect via MCP |
+| `backtest_run` | — | Runs the on_bar replay engine (optional vectorbt fast path); QuantConnect was evaluated and rejected in WP-67 to preserve the single-strategy-contract invariant |
 | `notify` | Claude | Formats result or observation into a Discord message |
 | `hitl_interrupt` | — | Freezes graph, posts to Discord, waits for approval reaction |
 
@@ -169,6 +170,7 @@ user asked question     →  notify → END
 backtest requested      →  backtest_run → notify → END
 trade signal fired      →  risk_check → hitl_interrupt → [approve] → execute → END
                                                          [reject]  → END
+protective exit fired   →  risk_check → execute → END   (no HITL pause)
 ```
 
 ### 4.4 HITL interrupt
@@ -183,6 +185,8 @@ The human-in-the-loop interrupt is a native LangGraph feature. When a trade sign
 When you react with ✅ or ❌ (or reply via slash command), the external assistant or Discord integration translates the reaction to a `POST /talim/resume` call. LangGraph resumes from the checkpoint with full context intact, including the pending signal and all market state at the time the signal fired.
 
 If the VPS restarts while a signal is pending, the interrupt resumes correctly on restart — the SQLite checkpoint is the source of truth.
+
+**Current production flow (WP-75–WP-80):** the native Discord reaction bot is unused. Pending signals are persisted as durable rows (stable `signal_id`, deep link, lifecycle status) in episodic SQLite; an OpenClaw watcher polls `/talim/operator/pending` and posts alerts to Discord; the operator approves or rejects from the dashboard signal page (`/talim/dashboard/signal.html?signal=<id>`, with candlestick chart and validation context) or via OpenClaw commands. Every approval is re-validated at decision time — `Runtime.resume` refreshes broker positions/P&L and recent bars, re-runs strategy-specific signal validation and risk checks, and only then executes. Stale or invalidated approvals are blocked and recorded on the signal row instead of executing.
 
 ---
 
@@ -308,11 +312,13 @@ Domain filters are applied on top of the distance threshold (exclude macro event
 
 | Instrument | Source | Format | Granularity |
 |------------|--------|--------|-------------|
-| ES futures | Databento | Parquet | 5-min OHLCV |
-| BTC, ETH perps | Tardis | Parquet | 5-min OHLCV |
-| XJO / SPI200 | Databento | Parquet | 5-min OHLCV |
+| US500.cash | FOREX.com REST (primary), IG REST (allowance-limited) | Parquet under `data/forexcom/` / `data/ig/` | 5m / 1h |
+| AU200.cash | IG REST, FOREX.com REST | Parquet under `data/ig/` / `data/forexcom/` | 5m / 1h / 1d |
+| US500.proxy / AU200.proxy | Dukascopy BI5 ticks (`USA500IDXUSD` / `AUSIDXAUD`), aggregated to bars | Parquet under `data/backtest/dukascopy/` | 5m+ (pre-2020 deep history) |
 
-Historical data is stored locally on the VPS. A nightly cron job appends the previous day's bars and updates the regime library.
+Broker-style data is the primary source (WP-67); QuantConnect was rejected to keep one strategy contract. Dukascopy proxy datasets (WP-74) are kept separate from broker data with source-specific manifests and never mixed into `data/forexcom`/`data/ig`. Databento/Tardis ingest CLIs remain for the original futures/crypto path. Historical data is stored locally on the deploy host; a nightly cron job appends the previous day's bars.
+
+Backtests apply standardised per-venue spread/slippage/commission assumptions (WP-86, `config/backtest_costs.json`); baselines are re-recorded with `scripts/rerecord_baselines.py` (see `docs/backtest-comparison-rules.md`).
 
 ### 7.4 Backtest result schema
 

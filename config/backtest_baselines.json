@@ -1,0 +1,49 @@
+{
+  "_comment": "Baseline set for scripts/rerecord_baselines.py (WP-86/WP-87). One entry per strategy x instrument x timeframe. costs_venue keys into config/backtest_costs.json; the first param variant should stay {} (defaults) because comparison rules treat default-param runs as the baseline. Extra variants are recorded alongside for continuity with earlier baseline docs.",
+  "baselines": [
+    {
+      "strategy": "momentum-US500",
+      "instrument": "US500.cash",
+      "timeframe": "5m",
+      "data_dir": "data/forexcom",
+      "costs_venue": "forexcom",
+      "param_variants": [{}]
+    },
+    {
+      "strategy": "momentum-US500",
+      "instrument": "US500.cash",
+      "timeframe": "1h",
+      "data_dir": "data/forexcom",
+      "costs_venue": "forexcom",
+      "param_variants": [{}]
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "instrument": "US500.cash",
+      "timeframe": "5m",
+      "data_dir": "data/forexcom",
+      "costs_venue": "forexcom",
+      "param_variants": [{}]
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "instrument": "US500.cash",
+      "timeframe": "1h",
+      "data_dir": "data/forexcom",
+      "costs_venue": "forexcom",
+      "param_variants": [{}]
+    },
+    {
+      "strategy": "momentum-AU200",
+      "instrument": "AU200.cash",
+      "timeframe": "1h",
+      "data_dir": "data/ig",
+      "costs_venue": "ig",
+      "param_variants": [
+        {},
+        {"ema_fast_period": 13, "ema_slow_period": 34},
+        {"ema_fast_period": 10, "ema_slow_period": 30, "min_ema_gap_atr": 0.1}
+      ]
+    }
+  ]
+}
