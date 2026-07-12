@@ -20,8 +20,10 @@ __pycache__/
 # Claude Code
 .claude/
 
-# Data
-data/
+# Data (directory committed via .gitkeep like the WP-47 state dirs;
+# contents are local datasets)
+/data/*
+!/data/.gitkeep
 *.parquet
 
 # SQLite
