@@ -27,23 +27,24 @@ dashboard available for debugging and parity checks.
 | `POST /talim/operator/strategies/{name}/enable|disable` | `X-Talim-Secret` | Toggle strategy active set.   |
 
 The HTML shell itself is unauthenticated so the page can load before
-the operator pastes the secret. Every data-bearing request the JS
-makes carries `X-Talim-Secret`, which is stored in `sessionStorage`
-and wiped on tab close.
+the operator signs in. The sign-in dialog (a password field, so the
+secret is masked) exchanges the secret once via `/talim/auth/login`
+for an HttpOnly signed session cookie; the raw secret is never kept
+in browser storage. If the cookie expires mid-session the header
+drops back to the locked state on the next 401.
 
 ## Auth model
 
 Two explicit steps before the dashboard will perform any write:
 
-1. **Set secret.** Click *Set secret* in the header and paste the
-   bridge shared secret (`TALIM_BRIDGE_SECRET`). This unlocks reads.
+1. **Sign in.** Click *Sign in* in the header and paste the bridge
+   shared secret (`TALIM_BRIDGE_SECRET`) into the dialog. This
+   unlocks reads.
 2. **Unlock writes.** Click *Unlock writes* to arm approve/reject,
    halt, and strategy toggles for the current page load.
 
 The unlocked-writes flag lives in memory only — a browser refresh
-resets back to read-only. The secret in `sessionStorage` survives
-refreshes but is cleared when the tab closes (or via the *Lock*
-button).
+resets back to read-only.
 
 ## Running locally
 
@@ -76,7 +77,9 @@ in Talim itself or only in the OpenClaw integration layer.
 
 - **Runtime** — exchange name/mode, pricefeed state and subscriptions,
   active instruments + strategies, open P&L, daily P&L, account
-  balance, halt status + HALT/Resume button (write-gated).
+  balance, halt status + HALT/Resume button (write-gated). The halt
+  dot in the header stays truthful even before sign-in by falling
+  back to the public `/talim/halt-status` endpoint.
 - **Pending HITL** — the pending signal on `thread_id=cron-main`,
   including its durable `signal_id` and advisory validation status when
   present, with Approve/Reject buttons (write-gated). POSTs to
@@ -88,19 +91,35 @@ in Talim itself or only in the OpenClaw integration layer.
   linked signal is the current pending signal and live validation allows
   approval; stale/non-current links show a warning. The operator page still
   shows compact pending-signal information and links out to this page.
-- **Open Positions** — live broker positions with per-position
-  open P&L.
+- **Open Positions** — open positions from
+  `/talim/operator/positions/dashboard` with live mark price, mark
+  P&L, P&L source, and a pricefeed-status summary line (the same
+  data the standalone positions page uses).
 - **Strategies** — all loadable strategies under `strategies/`, with
-  an Enable/Disable button per row (write-gated). Calls
-  `/talim/operator/strategies/{name}/enable|disable`.
+  an Enable/Disable button per row (write-gated) and a *Params*
+  button that expands a read-only view of the strategy's declared
+  parameter schema and current values
+  (`/talim/operator/strategies/{name}/params`).
 - **Recent Decisions** — episodic decisions table, filterable by
-  instrument, strategy, and limit.
+  instrument, strategy, and limit. Timestamps are UTC with a
+  relative "n m ago" suffix.
 - **Backtest History** — persistent runs from the WP-68 history store,
   filterable by strategy/instrument. Clicking a row opens a detail
-  view with parameter variant, matched dates, and full metrics.
+  view with parameter variant, matched dates, and full metrics; the
+  open detail survives the auto-refresh cycle until *Close* is
+  clicked.
 
 All panels auto-refresh every 15 seconds; the *Refresh* button in
-the header triggers an immediate refresh of every panel.
+the header triggers an immediate refresh of every panel. Concurrent
+refreshes coalesce into one in-flight pass, and polling pauses while
+the tab is hidden (with an immediate refresh when it becomes visible
+again).
+
+The tab title mirrors operator-relevant state — `⏸ HALTED` and/or
+`⏳ pending` prefixes — so the dashboard can sit in a background tab.
+The *Notify* header button (per-tab, off by default) requests browser
+notification permission and fires a desktop notification when a new
+pending HITL signal appears.
 
 ## Extending
 
@@ -108,9 +127,15 @@ the header triggers an immediate refresh of every panel.
   `refreshX()` function to `app.js`, and wire it into `refreshAll()`.
 - New operator endpoint: add the route to `talim/api/bridge.py`
   behind `Depends(require_secret)` and surface it from the JS via
-  the `api()` helper (it injects the secret header automatically).
+  the `api()` helper (it sends the session cookie automatically and
+  resets the header auth state on 401).
 - Client-side helpers live in `talim/api/static/app.js`; there is
   no bundler — edits are live after a page refresh.
+- Shared UI primitives (toasts, `<dialog>`-based confirm and
+  secret-entry prompts) live in `talim/api/static/ui.js` under the
+  `TalimUI` namespace and are loaded by every dashboard page. Use
+  `TalimUI.toast(...)` / `TalimUI.confirm(...)` instead of
+  `alert()` / `confirm()`.
 
 ## Smoke tests
 

@@ -7,6 +7,12 @@ const state = {
   authenticated: false,
   unlocked: false, // writes require an explicit per-tab unlock (task #17)
   timer: null,
+  refreshPromise: null,
+  halted: null,
+  pendingSignalId: null,
+  notifyEnabled: false,
+  openBacktestRunId: null,
+  strategyParams: { name: null, data: null, error: null },
   decisionsFilters: { instrument: "", strategy: "", limit: 20 },
   backtestsFilters: { strategy: "", instrument: "", limit: 25 },
 };
@@ -52,6 +58,13 @@ async function api(path, options = {}) {
     const err = new Error((body && body.detail) || `HTTP ${resp.status}`);
     err.status = resp.status;
     err.body = body;
+    if (resp.status === 401 && state.authenticated) {
+      // The session cookie expired mid-session: drop back to the locked
+      // header state instead of showing "Unlocked" next to 401 panels.
+      state.authenticated = false;
+      state.unlocked = false;
+      syncAuthUi();
+    }
     throw err;
   }
   return body;
@@ -141,6 +154,43 @@ function fmtTs(value) {
   catch (_) { return String(value); }
 }
 
+function fmtTsShort(value) {
+  if (!value) return "—";
+  try { return new Date(value).toISOString().slice(0, 19).replace("T", " "); }
+  catch (_) { return String(value); }
+}
+
+function fmtAgo(value) {
+  if (!value) return "";
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return "";
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 0) return "";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function updateTitle() {
+  let prefix = "";
+  if (state.halted) prefix += "⏸ HALTED · ";
+  if (state.pendingSignalId) prefix += "⏳ pending · ";
+  document.title = prefix + "Talim Operator";
+}
+
+function maybeNotifyPending(signalId, signal) {
+  if (!state.notifyEnabled || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+  const s = signal || {};
+  const text = `${String(s.side || "?").toUpperCase()} ${s.instrument || "?"} @ ${fmtNum(s.entry_price, 4)} · ${s.strategy || "—"}`;
+  try {
+    const n = new Notification("Talim: pending HITL signal", { body: text, tag: "talim-pending-signal" });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch (_) { /* Notification constructor can throw on some platforms */ }
+}
+
 function renderError(node, err) {
   clear(node);
   const msg = err && err.status === 401
@@ -164,10 +214,25 @@ function validationText(v) {
 // Runtime status
 // ---------------------------------------------------------------------------
 
-async function refreshStatus() {
-  const body = document.getElementById("status-body");
+function setHaltIndicator(halted) {
   const dot = document.getElementById("status-dot");
   const label = document.getElementById("status-label");
+  state.halted = halted == null ? null : !!halted;
+  updateTitle();
+  if (halted == null) {
+    dot.className = "dot unknown";
+    label.textContent = "—";
+  } else if (halted) {
+    dot.className = "dot bad";
+    label.textContent = "HALTED";
+  } else {
+    dot.className = "dot ok";
+    label.textContent = "running";
+  }
+}
+
+async function refreshStatus() {
+  const body = document.getElementById("status-body");
   try {
     const data = await api("/talim/operator/status");
     const rt = data.runtime || {};
@@ -198,27 +263,32 @@ async function refreshStatus() {
       text: data.halted ? "Resume trading" : "HALT",
       disabled: !writesAllowed(),
       onClick: async () => {
-        if (!confirm(data.halted ? "Resume trading?" : "HALT all trading?")) return;
+        const ok = await TalimUI.confirm(
+          data.halted ? "Resume trading?" : "HALT all trading?",
+          { confirmLabel: data.halted ? "Resume trading" : "HALT", danger: !data.halted },
+        );
+        if (!ok) return;
         try {
           await api(data.halted ? "/talim/resume-trading" : "/talim/halt", { method: "POST", body: "{}" });
+          TalimUI.toast(data.halted ? "Trading resumed" : "Trading HALTED", "ok");
           await refreshAll();
-        } catch (err) { alert("Action failed: " + err.message); }
+        } catch (err) { TalimUI.toast("Action failed: " + err.message, "error"); }
       },
     });
     controls.appendChild(haltBtn);
     body.appendChild(controls);
 
-    if (data.halted) {
-      dot.className = "dot bad";
-      label.textContent = "HALTED";
-    } else {
-      dot.className = "dot ok";
-      label.textContent = "running";
-    }
+    setHaltIndicator(data.halted);
   } catch (err) {
-    dot.className = "dot unknown";
-    label.textContent = "—";
     renderError(body, err);
+    // The runtime endpoint needs auth, but the kill-switch flag is public
+    // (/talim/halt-status): keep the header dot truthful before sign-in.
+    try {
+      const hs = await api("/talim/halt-status");
+      setHaltIndicator(hs.halted);
+    } catch (_) {
+      setHaltIndicator(null);
+    }
   }
 }
 
@@ -226,11 +296,24 @@ async function refreshStatus() {
 // Pending HITL
 // ---------------------------------------------------------------------------
 
-async function refreshPending() {
+function fetchPending() {
+  return api("/talim/operator/pending?thread_id=" + encodeURIComponent(THREAD_ID));
+}
+
+async function refreshPending(pendingPromise) {
   const body = document.getElementById("pending-body");
   try {
-    const data = await api("/talim/operator/pending?thread_id=" + encodeURIComponent(THREAD_ID));
+    const data = await (pendingPromise || fetchPending());
     clear(body);
+
+    const currentSignalId = data.pending_signal
+      ? (data.signal_id || data.pending_signal.signal_id || "pending")
+      : null;
+    if (currentSignalId && currentSignalId !== state.pendingSignalId) {
+      maybeNotifyPending(currentSignalId, data.pending_signal);
+    }
+    state.pendingSignalId = currentSignalId;
+    updateTitle();
 
     if (!data.pending_signal) {
       body.appendChild(el("div", { class: "muted", text: data.last_action ? `no pending signal · last: ${data.last_action}` : "no pending signal" }));
@@ -301,22 +384,23 @@ async function refreshPending() {
 async function sendDecision(approved, signalId) {
   const verb = approved ? "Approve" : "Reject";
   const suffix = signalId ? ` signal ${signalId}` : ` the pending signal on thread ${THREAD_ID}`;
-  if (!confirm(`${verb}${suffix}?`)) return;
+  const ok = await TalimUI.confirm(`${verb}${suffix}?`, { confirmLabel: verb, danger: !approved });
+  if (!ok) return;
   try {
     const result = await api("/talim/operator/decision", {
       method: "POST",
       body: JSON.stringify({ thread_id: THREAD_ID, approved, signal_id: signalId || null }),
     });
-    if (result.last_action) alert(result.last_action);
+    TalimUI.toast(result.last_action || (approved ? "Signal approved" : "Signal rejected"), "ok");
     await refreshAll();
-  } catch (err) { alert("Decision failed: " + err.message); }
+  } catch (err) { TalimUI.toast("Decision failed: " + err.message, "error"); }
 }
 
 // ---------------------------------------------------------------------------
 // Signal detail
 // ---------------------------------------------------------------------------
 
-async function refreshSignalDetail() {
+async function refreshSignalDetail(pendingPromise) {
   const panel = document.getElementById("panel-signal-detail");
   const body = document.getElementById("signal-detail-body");
   const signalId = requestedSignalId();
@@ -361,7 +445,7 @@ async function refreshSignalDetail() {
       el("a", { class: "nav-link", href: detailUrl, text: "Open signal page" }),
     ]));
 
-    const currentPending = await api("/talim/operator/pending?thread_id=" + encodeURIComponent(THREAD_ID));
+    const currentPending = await (pendingPromise || fetchPending());
     const isCurrent = currentPending.signal_id === signalId;
     if (!isCurrent) {
       body.appendChild(el("div", { class: "warn", text: "This signal is not the current pending HITL signal. Approval is unavailable from this detail view." }));
@@ -405,31 +489,41 @@ async function refreshSignalDetail() {
 async function refreshPositions() {
   const body = document.getElementById("positions-body");
   try {
-    const data = await api("/talim/operator/positions");
+    const data = await api("/talim/operator/positions/dashboard");
     clear(body);
-    if (!data.positions || !data.positions.length) {
+    const summary = data.summary || {};
+    const positions = data.positions || [];
+    body.appendChild(el("div", {
+      class: "muted",
+      text: `${summary.pricefeed_connected ? "pricefeed live" : "pricefeed offline"}`
+        + ` · live mark P&L ${fmtSigned(summary.mark_open_pnl)}`
+        + ` · broker P&L ${fmtSigned(summary.broker_open_pnl)}`,
+    }));
+    if (!positions.length) {
       body.appendChild(el("div", { class: "muted", text: "no open positions" }));
       return;
     }
     const table = el("table");
     const thead = el("thead");
     const headRow = el("tr");
-    for (const h of ["instrument", "side", "qty", "entry", "stop", "target", "strategy", "open P&L"]) {
+    for (const h of ["instrument", "side", "qty", "entry", "mark", "stop", "target", "strategy", "P&L", "source"]) {
       headRow.appendChild(el("th", { text: h }));
     }
     thead.appendChild(headRow);
     table.appendChild(thead);
     const tbody = el("tbody");
-    for (const p of data.positions) {
+    for (const p of positions) {
       const row = el("tr");
       row.appendChild(el("td", { text: p.instrument || "—" }));
       row.appendChild(el("td", { text: p.side || "—" }));
       row.appendChild(el("td", { text: fmtNum(p.qty, 4) }));
       row.appendChild(el("td", { text: fmtNum(p.entry_price, 4) }));
+      row.appendChild(el("td", { text: fmtNum(p.mark_price, 4) }));
       row.appendChild(el("td", { text: fmtNum(p.stop, 4) }));
       row.appendChild(el("td", { text: fmtNum(p.target, 4) }));
       row.appendChild(el("td", { text: p.strategy || "—" }));
-      row.appendChild(el("td", { text: fmtSigned(p.open_pnl), class: pnlClass(p.open_pnl) }));
+      row.appendChild(el("td", { text: fmtSigned(p.mark_open_pnl), class: pnlClass(p.mark_open_pnl) }));
+      row.appendChild(el("td", { text: p.pnl_source || "—" }));
       tbody.appendChild(row);
     }
     table.appendChild(tbody);
@@ -455,7 +549,7 @@ async function refreshStrategies() {
     const table = el("table");
     const thead = el("thead");
     const head = el("tr");
-    for (const h of ["strategy", "state", "action"]) head.appendChild(el("th", { text: h }));
+    for (const h of ["strategy", "state", "actions"]) head.appendChild(el("th", { text: h }));
     thead.appendChild(head);
     table.appendChild(thead);
     const tbody = el("tbody");
@@ -465,29 +559,91 @@ async function refreshStrategies() {
       row.appendChild(el("td", { text: name }));
       row.appendChild(el("td", { text: isActive ? "active" : "inactive", class: isActive ? "pnl-pos" : "muted" }));
       const actionCell = el("td");
-      const toggle = el("button", {
+      actionCell.appendChild(el("button", {
+        type: "button",
+        class: "compact",
+        text: state.strategyParams.name === name ? "Hide params" : "Params",
+        onClick: () => toggleStrategyParams(name),
+      }));
+      actionCell.appendChild(document.createTextNode(" "));
+      actionCell.appendChild(el("button", {
         type: "button",
         text: isActive ? "Disable" : "Enable",
         class: isActive ? "danger" : "ok",
         disabled: !writesAllowed(),
         onClick: () => toggleStrategy(name, !isActive),
-      });
-      actionCell.appendChild(toggle);
+      }));
       row.appendChild(actionCell);
       tbody.appendChild(row);
+      if (state.strategyParams.name === name) {
+        const cell = el("td", { colspan: 3 });
+        cell.appendChild(renderStrategyParams());
+        tbody.appendChild(el("tr", { class: "params-row" }, cell));
+      }
     }
     table.appendChild(tbody);
     body.appendChild(table);
   } catch (err) { renderError(body, err); }
 }
 
+async function toggleStrategyParams(name) {
+  if (state.strategyParams.name === name) {
+    state.strategyParams = { name: null, data: null, error: null };
+    await refreshStrategies();
+    return;
+  }
+  state.strategyParams = { name, data: null, error: null };
+  await refreshStrategies();
+  try {
+    const data = await api(`/talim/operator/strategies/${encodeURIComponent(name)}/params`);
+    if (state.strategyParams.name === name) state.strategyParams = { name, data, error: null };
+  } catch (err) {
+    if (state.strategyParams.name === name) state.strategyParams = { name, data: null, error: err.message };
+  }
+  if (state.strategyParams.name === name) await refreshStrategies();
+}
+
+function renderStrategyParams() {
+  const sp = state.strategyParams;
+  if (sp.error) return el("div", { class: "error", text: sp.error });
+  if (!sp.data) return el("div", { class: "muted", text: "loading params…" });
+  const schema = sp.data.schema || [];
+  const current = sp.data.current || {};
+  if (!schema.length) return el("div", { class: "muted", text: "no declared params" });
+  const table = el("table");
+  const head = el("tr");
+  for (const h of ["param", "current", "default", "constraints", "description"]) head.appendChild(el("th", { text: h }));
+  table.appendChild(el("thead", null, head));
+  const tbody = el("tbody");
+  for (const spec of schema) {
+    const constraints = spec.choices && spec.choices.length
+      ? `one of ${spec.choices.join(", ")}`
+      : [spec.min != null ? `min ${spec.min}` : null, spec.max != null ? `max ${spec.max}` : null]
+          .filter(Boolean).join(" · ");
+    const row = el("tr");
+    row.appendChild(el("td", { text: spec.name }));
+    row.appendChild(el("td", { text: current[spec.name] == null ? "—" : String(current[spec.name]) }));
+    row.appendChild(el("td", { text: spec.default == null ? "—" : String(spec.default), class: "muted" }));
+    row.appendChild(el("td", { text: constraints || "—", class: "muted" }));
+    row.appendChild(el("td", { text: spec.description || "—", class: "muted" }));
+    tbody.appendChild(row);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
 async function toggleStrategy(name, enable) {
   const verb = enable ? "enable" : "disable";
-  if (!confirm(`${verb} strategy "${name}"?`)) return;
+  const ok = await TalimUI.confirm(
+    `${enable ? "Enable" : "Disable"} strategy "${name}"?`,
+    { confirmLabel: enable ? "Enable" : "Disable", danger: !enable },
+  );
+  if (!ok) return;
   try {
     await api(`/talim/operator/strategies/${encodeURIComponent(name)}/${verb}`, { method: "POST", body: "{}" });
+    TalimUI.toast(`Strategy ${name} ${verb}d`, "ok");
     await refreshStrategies();
-  } catch (err) { alert(`Could not ${verb} ${name}: ${err.message}`); }
+  } catch (err) { TalimUI.toast(`Could not ${verb} ${name}: ${err.message}`, "error"); }
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +690,11 @@ async function refreshDecisions() {
         : (t.kind === "open" ? `${fmtNum(entryPrice, 2)} → open` : fmtNum(r.entry_price, 2));
       const status = t.kind === "trade" ? "closed" : (r.outcome || r.signal_type || "—");
       const points = t.kind === "trade" ? t.points : null;
-      row.appendChild(el("td", { text: r.timestamp || r.created_at || "—" }));
+      const ts = r.timestamp || r.created_at;
+      const tsCell = el("td", { text: fmtTsShort(ts) });
+      const ago = fmtAgo(ts);
+      if (ago) tsCell.appendChild(el("span", { class: "muted ts-ago", text: ` · ${ago}` }));
+      row.appendChild(tsCell);
       row.appendChild(el("td", { text: r.instrument || "—" }));
       row.appendChild(el("td", { text: r.strategy || "—" }));
       row.appendChild(el("td", { text: r.side || "—" }));
@@ -556,13 +716,10 @@ async function refreshDecisions() {
 
 async function refreshBacktests() {
   const body = document.getElementById("backtests-body");
-  const detail = document.getElementById("backtest-detail");
   try {
     const qs = buildQuery(state.backtestsFilters);
     const data = await api("/talim/operator/backtests" + qs);
     clear(body);
-    detail.hidden = true;
-    clear(detail);
     const rows = data.runs || [];
     if (!rows.length) {
       body.appendChild(el("div", { class: "muted", text: "no backtest runs match filters" }));
@@ -578,9 +735,13 @@ async function refreshBacktests() {
     table.appendChild(thead);
     const tbody = el("tbody");
     for (const r of rows) {
-      const row = el("tr", { class: "clickable", onClick: () => showBacktestDetail(r.id) });
+      const row = el("tr", {
+        class: "clickable" + (state.openBacktestRunId === r.id ? " selected" : ""),
+        "data-run-id": r.id,
+        onClick: () => showBacktestDetail(r.id),
+      });
       row.appendChild(el("td", { text: String(r.id) }));
-      row.appendChild(el("td", { text: (r.created_at || "").slice(0, 19).replace("T", " ") }));
+      row.appendChild(el("td", { text: fmtTsShort(r.created_at) }));
       row.appendChild(el("td", { text: r.strategy || "—" }));
       row.appendChild(el("td", { text: r.instrument || "—" }));
       row.appendChild(el("td", { text: r.timeframe || "—" }));
@@ -599,8 +760,27 @@ async function refreshBacktests() {
   } catch (err) { renderError(body, err); }
 }
 
+function markSelectedBacktestRow() {
+  document.querySelectorAll("#backtests-body tr[data-run-id]").forEach((tr) => {
+    tr.classList.toggle(
+      "selected",
+      state.openBacktestRunId != null && String(state.openBacktestRunId) === tr.getAttribute("data-run-id"),
+    );
+  });
+}
+
+function closeBacktestDetail() {
+  const detail = document.getElementById("backtest-detail");
+  state.openBacktestRunId = null;
+  detail.hidden = true;
+  clear(detail);
+  markSelectedBacktestRow();
+}
+
 async function showBacktestDetail(runId) {
   const detail = document.getElementById("backtest-detail");
+  state.openBacktestRunId = runId;
+  markSelectedBacktestRow();
   clear(detail);
   detail.hidden = false;
   detail.appendChild(el("div", { class: "muted", text: `Loading run ${runId}…` }));
@@ -614,7 +794,7 @@ async function showBacktestDetail(runId) {
       dl.appendChild(el("dt", { text: k }));
       dl.appendChild(el("dd", { text: v == null ? "—" : String(v) }));
     };
-    push("created_at", run.created_at);
+    push("created_at", fmtTs(run.created_at));
     push("strategy", run.strategy);
     push("instrument", run.instrument);
     push("timeframe", run.timeframe);
@@ -638,14 +818,12 @@ async function showBacktestDetail(runId) {
       detail.appendChild(el("h4", { text: "params" }));
       detail.appendChild(el("pre", { text: typeof run.param_variant === "string" ? run.param_variant : JSON.stringify(run.param_variant, null, 2) }));
     }
-    if (run.matched_dates) {
-      const md = Array.isArray(run.matched_dates) ? run.matched_dates : run.matched_dates;
-      if (md && md.length) {
-        detail.appendChild(el("h4", { text: "matched dates" }));
-        detail.appendChild(el("pre", { text: Array.isArray(md) ? md.join(", ") : String(md) }));
-      }
+    const md = run.matched_dates;
+    if (md && md.length) {
+      detail.appendChild(el("h4", { text: "matched dates" }));
+      detail.appendChild(el("pre", { text: Array.isArray(md) ? md.join(", ") : String(md) }));
     }
-    const close = el("button", { type: "button", text: "Close", onClick: () => { detail.hidden = true; clear(detail); } });
+    const close = el("button", { type: "button", text: "Close", onClick: closeBacktestDetail });
     detail.appendChild(close);
   } catch (err) { renderError(detail, err); }
 }
@@ -679,23 +857,60 @@ function syncAuthUi() {
   }
 }
 
+function syncNotifyUi() {
+  const btn = document.getElementById("notify-btn");
+  if (!btn) return;
+  if (typeof Notification === "undefined") {
+    btn.hidden = true;
+    return;
+  }
+  btn.hidden = false;
+  if (Notification.permission === "denied") {
+    btn.textContent = "Notify: blocked";
+    btn.disabled = true;
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = state.notifyEnabled ? "Notify: on" : "Notify: off";
+}
+
 function bindHeader() {
   document.getElementById("refresh-btn").addEventListener("click", refreshAll);
+  const notifyBtn = document.getElementById("notify-btn");
+  if (notifyBtn) {
+    notifyBtn.addEventListener("click", async () => {
+      if (typeof Notification === "undefined") return;
+      if (state.notifyEnabled) {
+        state.notifyEnabled = false;
+      } else {
+        const permission = Notification.permission === "granted"
+          ? "granted"
+          : await Notification.requestPermission();
+        state.notifyEnabled = permission === "granted";
+        if (permission === "denied") TalimUI.toast("Browser notifications are blocked for this site.", "error");
+      }
+      syncNotifyUi();
+    });
+  }
   document.getElementById("unlock-btn").addEventListener("click", async () => {
     if (!state.authenticated) {
-      const v = window.prompt("Paste the TALIM_BRIDGE_SECRET value once for this browser session:");
-      if (v) {
-        try {
-          await loginWithSecret(v.trim());
-          syncAuthUi();
-          refreshAll();
-        } catch (err) {
-          window.alert((err && err.message) || "Sign in failed");
-        }
+      const secret = await TalimUI.promptSecret("Paste the TALIM_BRIDGE_SECRET value once for this browser session.");
+      if (!secret) return;
+      try {
+        await loginWithSecret(secret);
+        syncAuthUi();
+        TalimUI.toast("Signed in", "ok");
+        refreshAll();
+      } catch (err) {
+        TalimUI.toast((err && err.message) || "Sign in failed", "error");
       }
       return;
     }
-    if (confirm("Unlock write actions (approve/reject, halt, strategy toggles) for this tab?")) {
+    const ok = await TalimUI.confirm(
+      "Unlock write actions (approve/reject, halt, strategy toggles) for this tab?",
+      { confirmLabel: "Unlock writes" },
+    );
+    if (ok) {
       state.unlocked = true;
       syncAuthUi();
       refreshAll();
@@ -747,28 +962,42 @@ function bindFilters() {
 // Top-level refresh
 // ---------------------------------------------------------------------------
 
-async function refreshAll() {
-  document.getElementById("last-refresh").textContent =
-    new Date().toISOString().replace("T", " ").replace(/\..*/, "") + " UTC";
-  await Promise.all([
-    refreshStatus(),
-    refreshPending(),
-    refreshSignalDetail(),
-    refreshPositions(),
-    refreshStrategies(),
-    refreshDecisions(),
-    refreshBacktests(),
-  ]);
+function refreshAll() {
+  // Coalesce concurrent callers (15s timer, manual refresh, post-action
+  // refreshes) onto one in-flight pass so slow bridge responses don't stack.
+  if (state.refreshPromise) return state.refreshPromise;
+  state.refreshPromise = (async () => {
+    document.getElementById("last-refresh").textContent =
+      new Date().toISOString().replace("T", " ").replace(/\..*/, "") + " UTC";
+    const pendingPromise = fetchPending();
+    pendingPromise.catch(() => {}); // consumers below handle their own errors
+    await Promise.all([
+      refreshStatus(),
+      refreshPending(pendingPromise),
+      refreshSignalDetail(pendingPromise),
+      refreshPositions(),
+      refreshStrategies(),
+      refreshDecisions(),
+      refreshBacktests(),
+    ]);
+  })().finally(() => { state.refreshPromise = null; });
+  return state.refreshPromise;
 }
 
 function startAutoRefresh() {
   if (state.timer) clearInterval(state.timer);
-  state.timer = setInterval(refreshAll, REFRESH_INTERVAL_MS);
+  state.timer = setInterval(() => {
+    if (!document.hidden) refreshAll();
+  }, REFRESH_INTERVAL_MS);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   bindHeader();
   bindFilters();
+  syncNotifyUi();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshAll();
+  });
   await refreshSession();
   syncAuthUi();
   refreshAll();
