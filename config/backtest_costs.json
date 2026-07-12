@@ -1,0 +1,53 @@
+{
+  "_comment": "Standardised backtest cost assumptions (BR-05 / WP-86). spread_points is the FULL bid/ask spread in instrument points; the engine charges half per fill against mid-based bar data. slippage_points is extra adverse points per fill on top of the half-spread. commission_per_side is flat account-currency per fill (index CFDs here are spread-only). Values are conservative desk assumptions from advertised broker minimum spreads plus off-peak widening margin - verify against live demo snapshot quotes before treating as final (see docs/backtest-cost-assumptions.md).",
+  "venues": {
+    "forexcom": {
+      "instruments": {
+        "US500.cash": {
+          "spread_points": 0.5,
+          "slippage_points": 0.1,
+          "commission_per_side": 0.0,
+          "notes": "Advertised min spread ~0.4; 0.5 covers typical widening outside US cash session."
+        },
+        "AU200.cash": {
+          "spread_points": 1.2,
+          "slippage_points": 0.2,
+          "commission_per_side": 0.0,
+          "notes": "Advertised min spread ~1.0; 1.2 covers SYCOM/off-peak widening."
+        }
+      }
+    },
+    "ig": {
+      "instruments": {
+        "US500.cash": {
+          "spread_points": 0.6,
+          "slippage_points": 0.1,
+          "commission_per_side": 0.0,
+          "notes": "IG US 500 min spread 0.4 in-hours; 0.6 as an average across sessions."
+        },
+        "AU200.cash": {
+          "spread_points": 1.5,
+          "slippage_points": 0.2,
+          "commission_per_side": 0.0,
+          "notes": "IG Australia 200 min spread 1.0 in-hours; wider off-peak."
+        }
+      }
+    },
+    "dukascopy-proxy": {
+      "instruments": {
+        "US500.proxy": {
+          "spread_points": 0.5,
+          "slippage_points": 0.1,
+          "commission_per_side": 0.0,
+          "notes": "Proxy data backtests should charge the costs of the venue we would trade on; mirrors forexcom US500.cash."
+        },
+        "AU200.proxy": {
+          "spread_points": 1.2,
+          "slippage_points": 0.2,
+          "commission_per_side": 0.0,
+          "notes": "Mirrors forexcom AU200.cash for the same reason."
+        }
+      }
+    }
+  }
+}

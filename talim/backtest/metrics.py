@@ -10,14 +10,15 @@ import numpy as np
 @dataclass
 class Trade:
     side: str            # "long" | "short"
-    entry_price: float
+    entry_price: float   # fill price (already includes spread/slippage if modelled)
     exit_price: float
     qty: float = 1.0
+    fees: float = 0.0    # flat account-currency costs (commissions), subtracted from pnl
 
     @property
     def pnl(self) -> float:
         direction = 1.0 if self.side == "long" else -1.0
-        return (self.exit_price - self.entry_price) * direction * self.qty
+        return (self.exit_price - self.entry_price) * direction * self.qty - self.fees
 
 
 def compute_metrics(trades: list[Trade]) -> dict:
