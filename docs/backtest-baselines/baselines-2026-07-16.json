@@ -1,0 +1,190 @@
+{
+  "recorded_at": "2026-07-16",
+  "engine": "on_bar",
+  "cost_model": "WP-86 standard (config/backtest_costs.json)",
+  "sizing": {
+    "mode": "fixed_qty",
+    "fixed_qty": 1.0,
+    "initial_capital": 100000.0
+  },
+  "manifest": "config/backtest_baselines.json",
+  "notes": "WP-86 spread verification bump 2026-07-16",
+  "baselines": [
+    {
+      "strategy": "momentum-US500",
+      "instrument": "US500.cash",
+      "timeframe": "5m",
+      "data_dir": "data/forexcom",
+      "costs": {
+        "spread_points": 0.6,
+        "slippage_points": 0.1,
+        "commission_per_side": 0.0,
+        "source": "forexcom/US500.cash@config/backtest_costs.json"
+      },
+      "results": [
+        {
+          "params": {},
+          "net_pnl": -7329.58,
+          "sharpe_ratio": -0.068,
+          "sortino_ratio": -0.1651,
+          "max_drawdown": -7406.23,
+          "win_rate": 0.3352,
+          "profit_factor": 0.8396,
+          "total_trades": 8834,
+          "return_pct": -0.073296,
+          "period_start": "2021-05-02 22:00:00+00:00",
+          "period_end": "2026-05-01 11:50:00+00:00",
+          "history_run_id": 2734
+        }
+      ]
+    },
+    {
+      "strategy": "momentum-US500",
+      "instrument": "US500.cash",
+      "timeframe": "1h",
+      "data_dir": "data/forexcom",
+      "costs": {
+        "spread_points": 0.6,
+        "slippage_points": 0.1,
+        "commission_per_side": 0.0,
+        "source": "forexcom/US500.cash@config/backtest_costs.json"
+      },
+      "results": [
+        {
+          "params": {},
+          "net_pnl": -849.56,
+          "sharpe_ratio": -0.0202,
+          "sortino_ratio": -0.0506,
+          "max_drawdown": -1222.15,
+          "win_rate": 0.3398,
+          "profit_factor": 0.9523,
+          "total_trades": 1130,
+          "return_pct": -0.008496,
+          "period_start": "2020-01-01 23:00:00+00:00",
+          "period_end": "2026-05-01 11:00:00+00:00",
+          "history_run_id": 2735
+        }
+      ]
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "instrument": "US500.cash",
+      "timeframe": "5m",
+      "data_dir": "data/forexcom",
+      "costs": {
+        "spread_points": 0.6,
+        "slippage_points": 0.1,
+        "commission_per_side": 0.0,
+        "source": "forexcom/US500.cash@config/backtest_costs.json"
+      },
+      "results": [
+        {
+          "params": {},
+          "net_pnl": -14208.38,
+          "sharpe_ratio": -0.1044,
+          "sortino_ratio": -0.1513,
+          "max_drawdown": -14281.89,
+          "win_rate": 0.5628,
+          "profit_factor": 0.7643,
+          "total_trades": 14985,
+          "return_pct": -0.142084,
+          "period_start": "2021-05-02 22:00:00+00:00",
+          "period_end": "2026-05-01 11:50:00+00:00",
+          "history_run_id": 2736
+        }
+      ]
+    },
+    {
+      "strategy": "mean-reversion-US500",
+      "instrument": "US500.cash",
+      "timeframe": "1h",
+      "data_dir": "data/forexcom",
+      "costs": {
+        "spread_points": 0.6,
+        "slippage_points": 0.1,
+        "commission_per_side": 0.0,
+        "source": "forexcom/US500.cash@config/backtest_costs.json"
+      },
+      "results": [
+        {
+          "params": {},
+          "net_pnl": -1880.61,
+          "sharpe_ratio": -0.0361,
+          "sortino_ratio": -0.0714,
+          "max_drawdown": -2213.88,
+          "win_rate": 0.5621,
+          "profit_factor": 0.9202,
+          "total_trades": 1667,
+          "return_pct": -0.018806,
+          "period_start": "2020-01-01 23:00:00+00:00",
+          "period_end": "2026-05-01 11:00:00+00:00",
+          "history_run_id": 2737
+        }
+      ]
+    },
+    {
+      "strategy": "momentum-AU200",
+      "instrument": "AU200.cash",
+      "timeframe": "1h",
+      "data_dir": "data/ig",
+      "costs": {
+        "spread_points": 4.0,
+        "slippage_points": 0.2,
+        "commission_per_side": 0.0,
+        "source": "ig/AU200.cash@config/backtest_costs.json"
+      },
+      "results": [
+        {
+          "params": {},
+          "net_pnl": -234.73,
+          "sharpe_ratio": -0.3447,
+          "sortino_ratio": -0.7961,
+          "max_drawdown": -248.94,
+          "win_rate": 0.2857,
+          "profit_factor": 0.4689,
+          "total_trades": 14,
+          "return_pct": -0.002347,
+          "period_start": "2025-11-20 16:00:00+00:00",
+          "period_end": "2026-07-16 11:00:00+00:00",
+          "history_run_id": 2738
+        },
+        {
+          "params": {
+            "ema_fast_period": 13,
+            "ema_slow_period": 34
+          },
+          "net_pnl": -234.73,
+          "sharpe_ratio": -0.3447,
+          "sortino_ratio": -0.7961,
+          "max_drawdown": -248.94,
+          "win_rate": 0.2857,
+          "profit_factor": 0.4689,
+          "total_trades": 14,
+          "return_pct": -0.002347,
+          "period_start": "2025-11-20 16:00:00+00:00",
+          "period_end": "2026-07-16 11:00:00+00:00",
+          "history_run_id": 2739
+        },
+        {
+          "params": {
+            "ema_fast_period": 10,
+            "ema_slow_period": 30,
+            "min_ema_gap_atr": 0.1
+          },
+          "net_pnl": -716.99,
+          "sharpe_ratio": -0.4416,
+          "sortino_ratio": -1.2488,
+          "max_drawdown": -705.74,
+          "win_rate": 0.2286,
+          "profit_factor": 0.3972,
+          "total_trades": 35,
+          "return_pct": -0.00717,
+          "period_start": "2025-11-20 16:00:00+00:00",
+          "period_end": "2026-07-16 11:00:00+00:00",
+          "history_run_id": 2740
+        }
+      ]
+    }
+  ],
+  "failures": []
+}
