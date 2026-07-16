@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import numpy as np
 import pandas as pd
 
 from talim.app.checkpointer import create_checkpointer
+from talim.app.demo_harness import build_mock_execution_data
 from talim.app.entrypoints import bridge_message, cron_trigger
 from talim.app.graph import build_graph
 from talim.app.llm_context import configure_llm_client, reset_llm_client
@@ -34,16 +34,10 @@ from talim.risk.rules import RiskRules
 from talim.strategy.loader import load_strategy
 
 
-def _trending_df(n: int = 120) -> pd.DataFrame:
-    close = 5000.0 + 60.0 * np.sin(np.arange(n) * 0.15)
-    return pd.DataFrame({
-        "timestamp": pd.date_range("2025-06-15 09:30", periods=n, freq="5min"),
-        "open": close,
-        "high": close + 5.0,
-        "low": close - 5.0,
-        "close": close,
-        "volume": np.full(n, 10_000.0),
-    })
+def _trending_df(n: int = 200) -> pd.DataFrame:
+    # WP-85 scanner guardrails: only a latest-bar cross in a non-ranging
+    # regime alerts, so reuse the harness data built to satisfy exactly that.
+    return build_mock_execution_data(n=n)
 
 
 def test_full_market_day(tmp_path):

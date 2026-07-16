@@ -18,6 +18,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from talim.backtest.costs import ZERO_COSTS, BacktestCostConfig
 from talim.backtest.data_loader import load_dataframe, load_ohlcv
 from talim.backtest.metrics import Trade, compute_metrics
 from talim.backtest.sizing import BacktestSizingConfig, size_trade
@@ -44,10 +45,12 @@ def _simulate(
     df: pd.DataFrame,
     instrument: str,
     sizing: BacktestSizingConfig | None = None,
+    costs: BacktestCostConfig | None = None,
 ) -> list[Trade]:
     """Replay bars through a strategy and collect simulated trades."""
     strategy.reset()
     sizing = sizing or BacktestSizingConfig()
+    costs = costs or ZERO_COSTS
     available_capital = sizing.initial_capital
     trades: list[Trade] = []
 
@@ -93,7 +96,13 @@ def _simulate(
             i = n  # consume the rest
         else:
             i = j + 1
-        trade = Trade(side=sig.side, entry_price=sig.entry_price, exit_price=exit_price, qty=qty)
+        trade = Trade(
+            side=sig.side,
+            entry_price=costs.entry_fill(sig.entry_price, sig.side),
+            exit_price=costs.exit_fill(exit_price, sig.side),
+            qty=qty,
+            fees=costs.round_trip_commission(qty),
+        )
         trades.append(trade)
         if sizing.compound:
             available_capital += trade.pnl
@@ -110,6 +119,7 @@ def run_backtest(
     timeframe: str | None = None,
     df: pd.DataFrame | None = None,
     sizing: BacktestSizingConfig | None = None,
+    costs: BacktestCostConfig | None = None,
 ) -> list[BacktestResult]:
     """Run a backtest for `strategy_name` across one or more parameter variants.
 
@@ -121,6 +131,9 @@ def run_backtest(
         instrument: Instrument symbol (used for the bar's `instrument` field).
         df: In-memory DataFrame to use instead of loading from disk (for tests).
         sizing: Position sizing model. Defaults to fixed 1-unit trades.
+        costs: Spread/slippage/commission model. Defaults to frictionless
+            (WP-86; load standardised venue assumptions via
+            `talim.backtest.costs.load_cost_config`).
 
     Returns:
         list[BacktestResult] sorted by sharpe_ratio descending.
@@ -150,7 +163,7 @@ def run_backtest(
         strategy = load_strategy(strategy_name)
         if variant:
             strategy.load_params(variant)
-        trades = _simulate(strategy, data, instrument, sizing=sizing)
+        trades = _simulate(strategy, data, instrument, sizing=sizing, costs=costs)
         m = compute_metrics(trades)
         period_start = str(data["timestamp"].iloc[0]) if "timestamp" in data and len(data) else ""
         period_end = str(data["timestamp"].iloc[-1]) if "timestamp" in data and len(data) else ""

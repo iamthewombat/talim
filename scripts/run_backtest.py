@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 
+from talim.backtest.costs import DEFAULT_COSTS_PATH, load_cost_config
 from talim.backtest.engine import run_backtest
 from talim.backtest.history import BacktestHistory, default_history_path
 from talim.backtest.sizing import BacktestSizingConfig
@@ -93,6 +94,20 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable compounding for risk_pct sizing",
     )
+    parser.add_argument(
+        "--costs-venue",
+        default=None,
+        help=(
+            "Apply standardised spread/slippage/commission assumptions for this "
+            "venue (e.g. forexcom, ig, dukascopy-proxy) from config/backtest_costs.json. "
+            "Omit to run frictionless (a warning is printed)."
+        ),
+    )
+    parser.add_argument(
+        "--costs-config",
+        default=str(DEFAULT_COSTS_PATH),
+        help="Path to the cost assumptions JSON (default: config/backtest_costs.json)",
+    )
     return parser
 
 
@@ -103,6 +118,22 @@ def main() -> int:
     except json.JSONDecodeError as exc:
         print(f"error: invalid JSON in --params: {exc}", file=sys.stderr)
         return 2
+
+    costs = None
+    if args.costs_venue:
+        try:
+            costs = load_cost_config(
+                args.costs_venue, args.instrument, path=args.costs_config
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+    else:
+        print(
+            "warning: running frictionless (no spread/slippage/commission). "
+            "Pass --costs-venue <venue> to apply standardised cost assumptions.",
+            file=sys.stderr,
+        )
 
     try:
         sizing = BacktestSizingConfig(
@@ -121,6 +152,7 @@ def main() -> int:
             data_dir=args.data_dir,
             param_variants=variants,
             sizing=sizing,
+            costs=costs,
         )
     except StrategyParamError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -161,6 +193,7 @@ def main() -> int:
 
     payload = {
         "results": [result.to_dict() for result in results],
+        "costs": costs.to_dict() if costs is not None else None,
         "sizing": {
             "initial_capital": sizing.initial_capital,
             "mode": sizing.mode,

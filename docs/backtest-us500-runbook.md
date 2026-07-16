@@ -71,10 +71,15 @@ bypass it short of using a different account.
     --instrument US500.cash --timeframe 5m --bars 4000
 ```
 
-FOREX.com's `barhistory` endpoint caps at ~4000 bars per call and
-does not currently accept a `from` parameter in our client. Deeper
-history requires extending `ingest_forexcom_prices.py` with
-time-windowed pagination.
+FOREX.com's `barhistory` endpoint caps at ~4000 bars per call, but
+`ingest_forexcom_prices.py` now pages through history with
+`--start`/`--end`/`--months` (chunked `fetch_bars_before` requests,
+`--chunk-size` up to 4000, `--sleep-seconds` between pages), e.g.:
+
+```bash
+.venv/bin/python scripts/ingest_forexcom_prices.py \
+    --instrument US500.cash --timeframe 5m --months 6 --append
+```
 
 ## 3. Run the baseline backtests
 
@@ -107,12 +112,25 @@ Drop `--no-history` to persist runs into the WP-68 history store
 `$TALIM_BACKTEST_HISTORY_DB`). Recorded runs are queryable via
 `GET /talim/operator/backtests`.
 
-## 4. Baseline snapshot (2026-04-19)
+## 4. Baseline snapshots
 
-Canonical default-parameter numbers are committed under
-`docs/backtest-baselines/us500-2026-04-19.json`. Re-run step 3 after
-any change to strategy defaults, ingest pipeline, or the fill-model
-in `talim/backtest/engine.py`, and update the snapshot.
+The original frictionless default-parameter numbers are committed under
+`docs/backtest-baselines/us500-2026-04-19.json` (superseded once a costed
+snapshot lands). Since WP-86, baselines are re-recorded in one step with
+standard venue costs applied:
+
+```bash
+.venv/bin/python scripts/rerecord_baselines.py
+```
+
+This runs every entry in `config/backtest_baselines.json` (US500 momentum +
+mean-reversion on 5m/1h, AU200 momentum on 1h), records each variant to the
+history DB with `triggered_by="baseline"`, and writes
+`docs/backtest-baselines/baselines-<date>.json` — commit that file. Use
+`--allow-partial` if one venue's dataset is not ingested yet.
+
+Re-run after any change to strategy defaults, ingest pipeline, cost
+assumptions, or the fill-model in `talim/backtest/engine.py`.
 
 Default-parameter Sharpe is negative on both strategies and both
 timeframes; this is the starting point for parameter sweeps, not a
@@ -123,9 +141,10 @@ finished system. Tuning lives in a separate WP.
 - **IG weekly allowance.** If the allowance is exhausted, FOREX.com is
   the usable fallback. Re-run against IG when the quota resets to
   cross-verify.
-- **FOREX.com 4000-bar cap.** The 5m slice only covers ~2.5 weeks;
-  Sharpe and max-DD numbers on 5m are under-powered until pagination
-  lands.
+- **FOREX.com 4000-bar cap (per request).** Pagination has landed
+  (`--start`/`--end`/`--months`), but the committed 5m baseline still
+  reflects the original ~2.5-week slice — re-ingest a deeper 5m window
+  before re-recording baselines so 5m Sharpe/max-DD numbers are powered.
 - **No 1d slice from FOREX.com yet.** `build_au200_dataset.py` fills
   1d from IG; FOREX.com ingest is 5m/1h only because daily data from
   FOREX.com has not been wired through the price feed's timeframe
