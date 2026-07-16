@@ -4,16 +4,16 @@
     "forexcom": {
       "instruments": {
         "US500.cash": {
-          "spread_points": 0.5,
+          "spread_points": 0.6,
           "slippage_points": 0.1,
           "commission_per_side": 0.0,
-          "notes": "Advertised min spread ~0.4; 0.5 covers typical widening outside US cash session."
+          "notes": "Verified 2026-07-16 vs demo 1m BID/ASK bars (~70h): fixed schedule, 0.4 US cash session / 0.6 off-peak. p90 0.6 exceeded prior 0.5."
         },
         "AU200.cash": {
-          "spread_points": 1.2,
+          "spread_points": 4.0,
           "slippage_points": 0.2,
           "commission_per_side": 0.0,
-          "notes": "Advertised min spread ~1.0; 1.2 covers SYCOM/off-peak widening."
+          "notes": "Verified 2026-07-16 vs demo 1m BID/ASK bars (~78h): fixed schedule, 1.0 ASX cash session / 4.0 SYCOM/off-peak. p90 4.0 exceeded prior 1.2; single-knob model must cover the dominant off-peak regime. Bimodal - consider session-aware costs if strategies trade mostly in-session."
         }
       }
     },
@@ -23,29 +23,29 @@
           "spread_points": 0.6,
           "slippage_points": 0.1,
           "commission_per_side": 0.0,
-          "notes": "IG US 500 min spread 0.4 in-hours; 0.6 as an average across sessions."
+          "notes": "Verified 2026-07-16 vs IG demo 1m bar bid/ask (~25h): 0.36 US cash session / 0.6 off-peak (brief 1.5 max). p90 0.6 matches config; unchanged."
         },
         "AU200.cash": {
-          "spread_points": 1.5,
+          "spread_points": 4.0,
           "slippage_points": 0.2,
           "commission_per_side": 0.0,
-          "notes": "IG Australia 200 min spread 1.0 in-hours; wider off-peak."
+          "notes": "Verified 2026-07-16 vs IG demo 1m bar bid/ask (~25h): 0.9 ASX cash session / 2.0-4.0 off-peak, p90 4.0 exceeded prior 1.5. Bimodal - see forexcom AU200 note."
         }
       }
     },
     "dukascopy-proxy": {
       "instruments": {
         "US500.proxy": {
-          "spread_points": 0.5,
+          "spread_points": 0.6,
           "slippage_points": 0.1,
           "commission_per_side": 0.0,
-          "notes": "Proxy data backtests should charge the costs of the venue we would trade on; mirrors forexcom US500.cash."
+          "notes": "Proxy data backtests should charge the costs of the venue we would trade on; mirrors forexcom US500.cash (verified 2026-07-16)."
         },
         "AU200.proxy": {
-          "spread_points": 1.2,
+          "spread_points": 4.0,
           "slippage_points": 0.2,
           "commission_per_side": 0.0,
-          "notes": "Mirrors forexcom AU200.cash for the same reason."
+          "notes": "Mirrors forexcom AU200.cash for the same reason (verified 2026-07-16)."
         }
       }
     }
