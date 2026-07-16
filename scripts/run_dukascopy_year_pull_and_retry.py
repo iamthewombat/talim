@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-raw-cache", action="store_true")
     p.add_argument("--include-market-closures", action="store_true")
     p.add_argument("--skip-month-pull", action="store_true", help="Only retry recorded unresolved hours")
+    p.add_argument("--end-date", default=None, help="Optional exclusive UTC cutoff (YYYY-MM-DD or ISO); clamps monthly pull for partial years")
     p.add_argument("--summary-output", required=True)
     return p.parse_args()
 
@@ -108,12 +109,19 @@ def main() -> int:
     base = base_dir(args.instrument)
     base.mkdir(parents=True, exist_ok=True)
 
+    end_date = pd.Timestamp(args.end_date, tz="UTC") if args.end_date else None
+
     for price_type in price_types:
         if args.skip_month_pull:
             print(f"=== Skipping monthly pull for {args.instrument} {args.year} {price_type} ===", flush=True)
         else:
             print(f"=== Pulling {args.instrument} {args.year} {price_type} ===", flush=True)
             for start, end in month_bounds(args.year):
+                if end_date is not None:
+                    if start >= end_date:
+                        break
+                    if end > end_date:
+                        end = end_date
                 print(f"--- {price_type} {start:%Y-%m} ---", flush=True)
                 run_ingest_window(args, price_type=price_type, start=start, end=end)
 
