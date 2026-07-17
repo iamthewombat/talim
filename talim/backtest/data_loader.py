@@ -108,6 +108,43 @@ def load_ohlcv(
     )
 
 
+def load_quotes(
+    data_dir: str | Path,
+    instrument: str,
+    timeframe: str,
+) -> pd.DataFrame:
+    """Load per-bar BID/ASK closes for per-bar cost modelling.
+
+    Reads the same canonical parquet as `load_ohlcv` but keeps the BID and
+    ASK rows, returning columns: timestamp, bid_close, ask_close. Fails
+    loudly when the file has no bid/ask rows so a mid-only dataset cannot
+    silently produce frictionless per-bar fills.
+    """
+    path = Path(data_dir) / instrument / f"{timeframe}.parquet"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"No {timeframe} parquet for {instrument} at {path}; per-bar costs "
+            "need the canonical multi-price_type file."
+        )
+    df = pd.read_parquet(path)
+    if "price_type" not in df.columns:
+        raise ValueError(f"{path} has no price_type column; cannot extract bid/ask quotes")
+    pt = df["price_type"].astype(str).str.upper()
+    bid = df[pt == "BID"][["timestamp", "close"]].rename(columns={"close": "bid_close"})
+    ask = df[pt == "ASK"][["timestamp", "close"]].rename(columns={"close": "ask_close"})
+    if bid.empty or ask.empty:
+        raise ValueError(
+            f"{path} lacks BID and/or ASK rows "
+            f"(bid={len(bid)}, ask={len(ask)}); cannot build per-bar costs"
+        )
+    quotes = bid.merge(ask, on="timestamp", how="inner")
+    quotes["timestamp"] = pd.to_datetime(quotes["timestamp"])
+    quotes = quotes.sort_values("timestamp").reset_index(drop=True)
+    spread = quotes["ask_close"] - quotes["bid_close"]
+    quotes = quotes[(spread >= 0) & (spread < quotes["bid_close"] * 0.01)]
+    return quotes.reset_index(drop=True)
+
+
 def load_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Validate and normalise an in-memory frame (used by tests)."""
     return _validate(df)

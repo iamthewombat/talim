@@ -48,6 +48,7 @@ services:
       - TALIM_STRATEGIES=${TALIM_STRATEGIES:-}
       - TALIM_DEFAULT_QTY=${TALIM_DEFAULT_QTY:-1}
       - TALIM_BAR_WINDOW=${TALIM_BAR_WINDOW:-50}
+      - TALIM_REGIME_FILTERS=${TALIM_REGIME_FILTERS:-}
       - TALIM_CHECKPOINT_DB=${TALIM_CHECKPOINT_DB:-/app/state/talim_checkpoints.db}
       - TALIM_EPISODIC_DB=${TALIM_EPISODIC_DB:-/app/state/episodic.db}
       - TALIM_BACKTEST_HISTORY_DB=${TALIM_BACKTEST_HISTORY_DB:-/app/state/backtest_history.db}

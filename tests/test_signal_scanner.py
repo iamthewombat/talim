@@ -355,3 +355,67 @@ class TestGraphIntegration:
         final = cron_trigger(thread_id="scanner-int-2")
         # No signal, no regime change → routes straight to END via router
         assert final.get("pending_signal") is None
+
+
+# ---------------------------------------------------------------------------
+# ATR regime gate on live signal emission (shared with backtest engine)
+# ---------------------------------------------------------------------------
+
+def _make_vol_step_df(n: int = 250, loud_bars: int = 30, quiet: float = 0.5, loud: float = 8.0) -> pd.DataFrame:
+    """Flat closes with a high-volatility tail — last bar is firmly atr-high."""
+    close_arr = np.full(n, 5000.0)
+    rng = np.full(n, quiet)
+    rng[-loud_bars:] = loud
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=n, freq="5min"),
+        "open": close_arr,
+        "high": close_arr + rng,
+        "low": close_arr - rng,
+        "close": close_arr,
+        "volume": np.full(n, 10000.0),
+    })
+
+
+class TestRegimeFilterGate:
+    def _setup(self, df: pd.DataFrame, regime_filters: dict, bar_window: int = 250):
+        feed = MockPriceFeed(source=df, instrument="ES")
+        configure_scanner(
+            feed, strategies=[], bar_window=bar_window, regime_filters=regime_filters
+        )
+        feed.connect()
+        feed.subscribe("ES")
+        bars = feed.replay()
+        _context.add_strategy(_TimestampSignalStrategy(bars[-1].timestamp))
+
+    def test_signal_suppressed_when_regime_gate_not_met(self):
+        df = _make_vol_step_df()  # high-vol tail, so atr-low gate must block
+        self._setup(df, {"momentum-US500": "atr-low"})
+        update = signal_scanner({"regime": "momentum"})
+        assert update.get("pending_signal") is None
+
+    def test_signal_passes_when_regime_gate_met(self):
+        df = _make_vol_step_df()
+        self._setup(df, {"momentum-US500": "atr-high"})
+        update = signal_scanner({"regime": "momentum"})
+        assert update.get("pending_signal") is not None
+
+    def test_gate_fails_closed_without_warmup(self):
+        # 80 bars < MIN_BARS (114): even the matching filter must block entries.
+        df = _make_vol_step_df(n=80, loud_bars=20)
+        self._setup(df, {"momentum-US500": "atr-high"}, bar_window=80)
+        update = signal_scanner({"regime": "momentum"})
+        assert update.get("pending_signal") is None
+
+    def test_unfiltered_strategy_unaffected(self):
+        df = _make_vol_step_df()
+        self._setup(df, {"some-other-strategy": "atr-low"})
+        update = signal_scanner({"regime": "momentum"})
+        assert update.get("pending_signal") is not None
+
+    def test_regime_filtered_strategy_ignores_ranging_fingerprint(self):
+        # Fingerprint says "ranging" but the strategy has an explicit ATR
+        # filter — the validated gate owns regime control, so the signal passes.
+        df = _make_vol_step_df()
+        self._setup(df, {"momentum-US500": "atr-high"})
+        update = signal_scanner({"regime": "ranging"})
+        assert update.get("pending_signal") is not None

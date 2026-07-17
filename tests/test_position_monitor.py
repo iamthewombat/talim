@@ -6,10 +6,16 @@ from datetime import datetime, timezone
 
 import pytest
 
-from talim.app.nodes.position_monitor import position_monitor, _check_exit
+from talim.app.nodes.position_monitor import (
+    position_monitor,
+    _check_exit,
+    _check_condition_exit,
+)
+from talim.app.nodes.signal_scanner import _context as scanner_context
 from talim.models.bar import OHLCVBar
 from talim.models.position import Position
 from talim.models.signal import Signal
+from talim.strategy.base import BaseStrategy
 
 
 def _bar(
@@ -188,3 +194,92 @@ class TestPositionMonitorNode:
         assert result["pending_signal"] is not None
         # Only one signal, not two
         assert isinstance(result["pending_signal"], Signal)
+
+
+# --- condition exit (strategy.exit_signal) tests ---
+
+
+class _FakeExitStrategy(BaseStrategy):
+    def __init__(self, should_exit: bool):
+        self.should_exit = should_exit
+        self.calls: list[tuple[OHLCVBar, str]] = []
+
+    @property
+    def name(self) -> str:
+        return "momentum-US500"
+
+    def on_bar(self, bar: OHLCVBar) -> Signal | None:
+        return None
+
+    def exit_signal(self, bar: OHLCVBar, side: str) -> bool:
+        self.calls.append((bar, side))
+        return self.should_exit
+
+
+@pytest.fixture
+def clean_scanner_strategies():
+    saved = dict(scanner_context.strategies)
+    scanner_context.strategies.clear()
+    yield scanner_context.strategies
+    scanner_context.strategies.clear()
+    scanner_context.strategies.update(saved)
+
+
+class TestConditionExit:
+    def test_condition_exit_fires_at_bar_close(self, clean_scanner_strategies):
+        strat = _FakeExitStrategy(should_exit=True)
+        clean_scanner_strategies[strat.name] = strat
+        sig = _check_condition_exit(_position(), _bar(close=5000))
+        assert sig is not None
+        assert sig.action == "exit"
+        assert sig.entry_price == 5000.0
+        assert "condition exit" in sig.rationale
+        assert strat.calls == [(_bar(close=5000), "long")]
+
+    def test_condition_exit_passes_position_side(self, clean_scanner_strategies):
+        strat = _FakeExitStrategy(should_exit=True)
+        clean_scanner_strategies[strat.name] = strat
+        _check_condition_exit(_position(side="short"), _bar())
+        assert strat.calls[0][1] == "short"
+
+    def test_no_exit_when_strategy_declines(self, clean_scanner_strategies):
+        strat = _FakeExitStrategy(should_exit=False)
+        clean_scanner_strategies[strat.name] = strat
+        assert _check_condition_exit(_position(), _bar()) is None
+        assert len(strat.calls) == 1
+
+    def test_fail_closed_when_strategy_not_loaded(self, clean_scanner_strategies):
+        assert _check_condition_exit(_position(), _bar()) is None
+
+    def test_node_emits_condition_exit(self, clean_scanner_strategies):
+        strat = _FakeExitStrategy(should_exit=True)
+        clean_scanner_strategies[strat.name] = strat
+        state = {
+            "active_positions": [_position(stop=4980, target=5030)],
+            "last_tick": _bar(low=4990, high=5010),  # no bracket hit
+        }
+        result = position_monitor(state)
+        sig = result["pending_signal"]
+        assert sig.action == "exit"
+        assert "condition exit" in sig.rationale
+
+    def test_bracket_takes_priority_over_condition_exit(self, clean_scanner_strategies):
+        """Mirrors the backtest engine: brackets first, condition exit second."""
+        strat = _FakeExitStrategy(should_exit=True)
+        clean_scanner_strategies[strat.name] = strat
+        state = {
+            "active_positions": [_position(stop=4990)],
+            "last_tick": _bar(low=4985),  # stop hit
+        }
+        result = position_monitor(state)
+        assert "stop" in result["pending_signal"].rationale
+
+    def test_condition_exit_ignores_other_instruments(self, clean_scanner_strategies):
+        strat = _FakeExitStrategy(should_exit=True)
+        clean_scanner_strategies[strat.name] = strat
+        state = {
+            "active_positions": [_position(instrument="NQ")],
+            "last_tick": _bar(instrument="ES"),
+        }
+        assert position_monitor(state) == {}
+        assert strat.calls == []

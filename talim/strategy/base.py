@@ -61,6 +61,15 @@ class BaseStrategy(ABC):
         """Reset internal state (e.g. between backtest runs)."""
         pass
 
+    def exit_signal(self, bar: OHLCVBar, side: str) -> bool:
+        """Condition exit for an open position, checked once per bar close.
+
+        The backtest engine calls this after bracket (stop/target) checks
+        while a position is open; returning True closes the position at the
+        bar close. Default: no condition exit (brackets only).
+        """
+        return False
+
     def validate_signal(
         self,
         signal: Signal,

@@ -1,8 +1,11 @@
 """Position monitor node — watches open positions for stop/target hits (WP-34).
 
 Called on every scanner tick. Reads `active_positions` and the latest bar,
-checks each position's stop and target against the bar's low/high, and
-emits an exit signal for the first position that should close.
+checks each position's stop and target against the bar's low/high, then the
+owning strategy's condition-exit hook, and emits an exit signal for the
+first position that should close. Order mirrors the backtest engine:
+brackets first (stop before target), then `strategy.exit_signal` at the
+bar close.
 """
 
 from __future__ import annotations
@@ -17,6 +20,37 @@ from talim.models.position import Position
 from talim.models.signal import Signal
 
 logger = logging.getLogger("talim.nodes.position_monitor")
+
+
+def _check_condition_exit(position: Position, bar: OHLCVBar) -> Signal | None:
+    """Ask the owning strategy's condition-exit hook for an exit at bar close.
+
+    The scanner node runs first each tick and re-feeds the bar window through
+    every active strategy, so indicator state already includes `bar` — the
+    same on_bar-then-exit_signal ordering the backtest engine uses. If the
+    strategy is not loaded in the scanner context (e.g. deactivated with a
+    position still open), fail closed to brackets-only rather than consult
+    stale indicator state.
+    """
+    from talim.app.nodes.signal_scanner import _context as scanner_context
+
+    strategy = scanner_context.strategies.get(position.strategy)
+    if strategy is None:
+        return None
+    if not strategy.exit_signal(bar, position.side):
+        return None
+    return Signal(
+        instrument=position.instrument,
+        strategy=position.strategy,
+        side=position.side,
+        entry_price=bar.close,
+        stop=0.0,
+        target=0.0,
+        rationale=f"condition exit at {bar.close:.2f}",
+        regime_context="",
+        timestamp=bar.timestamp,
+        action="exit",
+    )
 
 
 def _check_exit(position: Position, bar: OHLCVBar) -> Signal | None:
@@ -67,7 +101,7 @@ def _check_exit(position: Position, bar: OHLCVBar) -> Signal | None:
 
 
 def position_monitor(state: TalimState) -> TalimState:
-    """Check open positions for stop/target exits.
+    """Check open positions for stop/target exits, then condition exits.
 
     If a pending_signal already exists (from the scanner), skip — entry
     signals take priority so we don't clobber an unprocessed trade.
@@ -89,7 +123,7 @@ def position_monitor(state: TalimState) -> TalimState:
     for pos in positions:
         if pos.instrument != bar.instrument:
             continue
-        exit_signal = _check_exit(pos, bar)
+        exit_signal = _check_exit(pos, bar) or _check_condition_exit(pos, bar)
         if exit_signal is not None:
             logger.info(
                 "position_monitor: %s %s %s — %s",
