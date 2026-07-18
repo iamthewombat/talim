@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--symbol", default="AUSIDXAUD")
     p.add_argument("--instrument", default="AU200.proxy")
     p.add_argument("--timeframe", default="5m")
+    p.add_argument("--price-scale", default="auto",
+                   help="Dukascopy price divisor or 'auto' (auto is wrong for e.g. XAUUSD, which needs 1000)")
     p.add_argument("--price-types", default=",".join(PRICE_TYPES_DEFAULT))
     p.add_argument("--timeout-seconds", default="30")
     p.add_argument("--sleep-seconds", default="0.2")
@@ -64,7 +66,7 @@ def run_ingest_window(
         start=iso(start),
         end=iso(end),
         timeframe=args.timeframe,
-        price_scale="auto",
+        price_scale=args.price_scale,
         price_type=price_type,
         source="dukascopy",
         sleep_seconds=float(args.sleep_seconds),
