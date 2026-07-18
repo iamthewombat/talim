@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Talim Backtests</title>
+<title>Talim Strategies</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body class="backtests-page">
 <header>
-  <h1>Talim Backtests</h1>
+  <h1>Strategy Results</h1>
   <div class="controls">
     <a class="nav-link" href="/talim/dashboard/">Operator</a>
     <button id="refresh-btn" type="button">Refresh</button>
@@ -20,64 +20,56 @@
   </div>
 </header>
 
-<nav class="mobile-tabs" aria-label="Backtest sections">
-  <button type="button" class="tab active" data-view="runs">Outcomes</button>
-  <button type="button" class="tab" data-view="graph">Graph</button>
+<nav class="mobile-tabs" aria-label="Strategy sections">
+  <button type="button" class="tab active" data-view="rankings">Rankings</button>
+  <button type="button" class="tab" data-view="variants">Variations</button>
   <button type="button" class="tab" data-view="detail">Detail</button>
 </nav>
 
 <main class="backtests-main">
-  <section id="view-runs" class="bt-view active">
+  <section id="view-rankings" class="bt-view active">
     <div class="panel sticky-filter">
       <div class="panel-title-row">
-        <h2>Strategy outcomes</h2>
+        <h2>Strategy rankings</h2>
         <button id="toggle-filters" type="button" class="compact">Filters</button>
       </div>
-      <form id="backtests-filter" class="filter-row collapsible open">
-        <label>strategy <select name="strategy"><option value="">All strategies</option></select></label>
+      <form id="backtests-filter" class="filter-row collapsible">
+        <label>period <select name="period">
+          <option value="">All time</option>
+          <option value="90">Last 90 days</option>
+          <option value="30">Last 30 days</option>
+        </select></label>
         <label>instrument <select name="instrument"><option value="">All instruments</option></select></label>
         <label>bars <select name="timeframe"><option value="">All bars</option></select></label>
-        <label>sort <select name="sort">
-          <option value="sharpe_desc">Sharpe high → low</option>
-          <option value="win_rate_desc">Win rate high → low</option>
-          <option value="net_pnl_desc">Total P&amp;L high → low</option>
-          <option value="avg_net_pnl_desc">Avg P&amp;L high → low</option>
-          <option value="max_drawdown_desc">Drawdown best → worst</option>
-          <option value="total_trades_desc">Trades high → low</option>
-          <option value="run_count_desc">Runs high → low</option>
+        <label>sample <select name="min_trades">
+          <option value="20" selected>&ge;20 trades/run</option>
+          <option value="100">&ge;100 trades/run</option>
+          <option value="0">All (incl. validation re-runs)</option>
         </select></label>
-        <label>limit <input name="limit" type="number" value="100" min="1" max="500"></label>
+        <label>rank by <select name="sort">
+          <option value="sharpe_ratio">Sharpe</option>
+          <option value="net_pnl">Total P&amp;L</option>
+          <option value="profit_factor">Profit factor</option>
+          <option value="win_rate">Win rate</option>
+          <option value="max_drawdown">Drawdown</option>
+          <option value="total_trades">Trades</option>
+        </select></label>
         <button type="submit">Apply</button>
       </form>
     </div>
-    <div id="runs-body" class="runs-list">Loading…</div>
+    <div id="rankings-body" class="rank-list">Loading…</div>
   </section>
 
-  <section id="view-graph" class="bt-view">
-    <div class="panel">
-      <div class="panel-title-row">
-        <h2>Graph</h2>
-        <select id="graph-metric" aria-label="Graph metric">
-          <option value="net_pnl">Net P&amp;L</option>
-          <option value="return_pct">Return %</option>
-          <option value="sharpe_ratio">Sharpe</option>
-          <option value="sortino_ratio">Sortino</option>
-          <option value="max_drawdown">Max drawdown</option>
-          <option value="win_rate">Win rate</option>
-          <option value="profit_factor">Profit factor</option>
-          <option value="total_trades">Trades</option>
-        </select>
-      </div>
-      <div id="graph-summary" class="metric-strip"></div>
-      <div class="chart-wrap"><canvas id="runs-chart" width="900" height="420"></canvas></div>
-      <div id="graph-empty" class="muted" hidden>No strategy outcomes to graph yet.</div>
+  <section id="view-variants" class="bt-view">
+    <div id="variants-body">
+      <div class="panel"><p class="muted">Pick a strategy in Rankings first.</p></div>
     </div>
   </section>
 
   <section id="view-detail" class="bt-view">
     <div id="detail-body" class="panel detail-panel">
       <h2>Detail</h2>
-      <p class="muted">Select a strategy outcome or tap a bar in Graph.</p>
+      <p class="muted">Pick a variation first.</p>
     </div>
   </section>
 </main>

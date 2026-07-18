@@ -543,6 +543,7 @@ def create_app(
     def operator_backtest_outcomes(
         strategy: str | None = None,
         instrument: str | None = None,
+        exclude_triggered_by: str | None = None,
         status: str | None = None,
         timeframe: str | None = None,
         since: str | None = None,
@@ -555,6 +556,7 @@ def create_app(
             outcomes=rt.operator_backtest_outcomes(
                 strategy=strategy,
                 instrument=instrument,
+                exclude_triggered_by=exclude_triggered_by,
                 status=status,
                 timeframe=timeframe,
                 since=since,

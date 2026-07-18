@@ -534,6 +534,67 @@ dialog.talim-dialog input[type="password"] {
   gap: 8px;
 }
 
+/* Strategy rankings page */
+.rank-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.rank-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.rank-title strong { overflow-wrap: anywhere; }
+.rank-title h2 { margin: 0; text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--fg); }
+.rank-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: rgba(139, 147, 161, 0.12);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.rank-badge.top {
+  border-color: rgba(210, 153, 34, 0.6);
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--warn);
+}
+.live-pill { font-weight: 700; font-size: 11px; letter-spacing: 0.04em; }
+.rank-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(139, 147, 161, 0.15);
+  overflow: hidden;
+  margin: 2px 0 4px;
+}
+.rank-bar-fill { height: 100%; border-radius: 999px; }
+.rank-bar-fill.pos { background: var(--ok); }
+.rank-bar-fill.neg { background: var(--bad); }
+.rank-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rank-metrics .metric { padding: 6px 8px; }
+.rank-metrics .metric strong { font-size: 14px; }
+.rank-meta { margin-top: 2px; }
+.variants-head { margin-bottom: 12px; }
+.hidden-note { padding: 4px 2px; }
+#view-variants .run-card { max-width: 720px; margin: 0 auto 12px; }
+.back-btn { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .rank-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Inline strategy params row (operator page) */
 tr.params-row td { white-space: normal; }
 tr.params-row table { margin: 4px 0; }

@@ -178,8 +178,21 @@ class TestBacktestHistoryStore:
         assert len(h.list_runs(strategy="momentum-AU200")) == 1
         assert len(h.list_runs(instrument="AU200.cash")) == 1
         assert len(h.list_runs(triggered_by="cli")) == 2
+        assert len(h.list_runs(exclude_triggered_by="node")) == 2
         # Unknown id → None
         assert h.get_run(9999) is None
+
+    def test_list_outcomes_exclude_triggered_by(self, tmp_path):
+        h = BacktestHistory(tmp_path / "h.db")
+        req = BacktestRequest(strategy_name="momentum-US500", instrument="US500.cash")
+        h.record_run(result=_sample_result(sharpe=1.0), request=req, triggered_by="cli")
+        h.record_run(result=_sample_result(sharpe=800.0), request=req, triggered_by="node")
+
+        mixed = h.list_outcomes()
+        assert mixed[0]["run_count"] == 2
+        clean = h.list_outcomes(exclude_triggered_by="node")
+        assert clean[0]["run_count"] == 1
+        assert clean[0]["sharpe_ratio"] == pytest.approx(1.0)
 
     def test_list_runs_pagination(self, tmp_path):
         h = BacktestHistory(tmp_path / "h.db")
