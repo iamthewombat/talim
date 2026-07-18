@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Run multiple strategy legs on the same data and score the combined book.
+"""Monte Carlo robustness analysis of a strategy or portfolio backtest.
 
-Each leg is simulated independently (own strategy, params, regime filter) on
-the same bar series and capital base; combined equity is the element-wise sum
-of the per-leg mark-to-market curves, so the portfolio metrics reflect real
-daily offsets between legs rather than concatenated trade lists alone.
+Simulates the leg(s) exactly like run_portfolio_backtest.py, then applies a
+stationary block bootstrap to the combined daily equity changes to produce
+distributions of net P&L, annualised Sharpe and max drawdown. Use the 5th
+percentile of max drawdown (bad tail) for sizing decisions and the Sharpe
+p5/prob-below-0 as a significance check on small samples.
 
-Example:
-  run_portfolio_backtest.py --instrument US500.proxy --timeframe 1d \
+Example (live 3-leg book, in-sample):
+  run_monte_carlo.py --instrument US500.proxy --timeframe 1d \
     --data-dir data/dukascopy --costs-venue dukascopy-proxy \
     --end 2025-01-01 --per-bar-costs \
     --leg '{"strategy": "momentum-US500", "regime_filter": "atr-high"}' \
-    --leg '{"strategy": "rsi2-reversion", "regime_filter": "atr-low"}'
+    --leg '{"strategy": "rsi2-reversion", "regime_filter": "atr-low"}' \
+    --leg '{"strategy": "ibs-reversion"}'
 """
 
 from __future__ import annotations
@@ -25,9 +27,9 @@ import pandas as pd
 from talim.backtest.costs import DEFAULT_COSTS_PATH, ZERO_COSTS, load_cost_config
 from talim.backtest.data_loader import load_ohlcv, load_quotes
 from talim.backtest.engine import _align_spread, _simulate
-from talim.regime.atr_gate import atr_regime_mask
-from talim.backtest.metrics import compute_equity_metrics, compute_metrics
+from talim.backtest.monte_carlo import monte_carlo_summary
 from talim.backtest.sizing import BacktestSizingConfig
+from talim.regime.atr_gate import atr_regime_mask
 from talim.strategy.loader import load_strategy
 
 
@@ -52,16 +54,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--entries-start",
         default=None,
-        help=(
-            "Allow NEW entries only from this UTC timestamp; earlier bars still "
-            "warm indicators/regime stats. Metrics are computed from this point. "
-            "Use for OOS walk-forward so warmup does not eat the holdout."
-        ),
+        help="Allow NEW entries only from this UTC timestamp (OOS walk-forward)",
     )
     parser.add_argument("--per-bar-costs", action="store_true")
     parser.add_argument("--slippage-frac", type=float, default=0.25)
     parser.add_argument("--initial-capital", type=float, default=100_000.0)
     parser.add_argument("--fixed-qty", type=float, default=1.0)
+    parser.add_argument("--sims", type=int, default=2000)
+    parser.add_argument("--block-days", type=float, default=20.0,
+                        help="Mean bootstrap block length in days")
+    parser.add_argument("--seed", type=int, default=7)
     return parser
 
 
@@ -89,7 +91,6 @@ def main() -> int:
         return 2
 
     spread_arr = None
-    quotes = None
     if args.per_bar_costs:
         quotes = load_quotes(args.data_dir, args.instrument, args.timeframe)
         spread_arr = _align_spread(data, quotes)
@@ -101,18 +102,12 @@ def main() -> int:
         else None
     )
 
-    def _trim_curve(curve):
-        if entries_ts is None:
-            return curve
-        return [(ts, pnl) for ts, pnl in curve if ts >= entries_ts]
-
     sizing = BacktestSizingConfig(
         initial_capital=args.initial_capital, fixed_qty=args.fixed_qty
     )
 
-    all_trades = []
     combined_equity = None
-    leg_reports = []
+    total_trades = 0
     for spec in legs:
         strategy = load_strategy(spec["strategy"])
         if spec.get("params"):
@@ -131,58 +126,41 @@ def main() -> int:
             slippage_frac=args.slippage_frac,
             entry_mask=entry_mask,
         )
-        all_trades.extend(trades)
-        equity_vals = [pnl for _, pnl in curve]
+        total_trades += len(trades)
         if combined_equity is None:
-            combined_equity = equity_vals
+            combined_equity = [pnl for _, pnl in curve]
             timestamps = [ts for ts, _ in curve]
         else:
-            combined_equity = [a + b for a, b in zip(combined_equity, equity_vals)]
-        m = compute_metrics(trades)
-        em = compute_equity_metrics(_trim_curve(curve), args.initial_capital)
-        leg_reports.append(
-            {
-                "strategy": spec["strategy"],
-                "regime_filter": regime,
-                "params": spec.get("params") or {},
-                "net_pnl": m["net_pnl"],
-                "total_trades": m["total_trades"],
-                "win_rate": m["win_rate"],
-                "profit_factor": m["profit_factor"],
-                "annualised_sharpe": em["annualised_sharpe"],
-                "max_drawdown_pct": em["max_drawdown_pct"],
-                "yearly_pnl": em["yearly_pnl"],
-                "profitable_years_frac": em["profitable_years_frac"],
-                "max_year_contribution": em["max_year_contribution"],
-            }
-        )
+            combined_equity = [a + b for a, b in zip(combined_equity, [p for _, p in curve])]
 
-    combined_curve = _trim_curve(list(zip(timestamps, combined_equity)))
-    cm = compute_metrics(all_trades)
-    cem = compute_equity_metrics(combined_curve, args.initial_capital)
+    curve = list(zip(timestamps, combined_equity))
+    if entries_ts is not None:
+        curve = [(ts, pnl) for ts, pnl in curve if ts >= entries_ts]
+
+    summary = monte_carlo_summary(
+        curve,
+        args.initial_capital,
+        n_sims=args.sims,
+        mean_block_days=args.block_days,
+        seed=args.seed,
+    )
 
     payload = {
         "instrument": args.instrument,
         "timeframe": args.timeframe,
-        "window": {"start": args.start, "end": args.end, "entries_start": args.entries_start},
+        "legs": legs,
+        "window": {
+            "start": args.start,
+            "end": args.end,
+            "entries_start": args.entries_start,
+        },
         "costs": {
             "mode": "per-bar" if args.per_bar_costs else "flat",
             "venue": args.costs_venue,
             "slippage_frac": args.slippage_frac,
         },
-        "legs": leg_reports,
-        "combined": {
-            "net_pnl": cm["net_pnl"],
-            "total_trades": cm["total_trades"],
-            "win_rate": cm["win_rate"],
-            "profit_factor": cm["profit_factor"],
-            "annualised_sharpe": cem["annualised_sharpe"],
-            "annualised_sortino": cem["annualised_sortino"],
-            "max_drawdown_pct": cem["max_drawdown_pct"],
-            "yearly_pnl": cem["yearly_pnl"],
-            "profitable_years_frac": cem["profitable_years_frac"],
-            "max_year_contribution": cem["max_year_contribution"],
-        },
+        "total_trades": total_trades,
+        "monte_carlo": summary,
     }
     print(json.dumps(payload, indent=2))
     return 0
