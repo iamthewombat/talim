@@ -50,6 +50,12 @@ class BacktestResult:
     period_end: str = ""
     status: str = "completed"
     artifact_path: str = ""
+    annualised_sharpe: float = 0.0
+    annualised_sortino: float = 0.0
+    max_drawdown_pct: float = 0.0
+    yearly_pnl: dict = field(default_factory=dict)
+    profitable_years_frac: float = 0.0
+    max_year_contribution: float = 0.0
 
     def to_dict(self) -> dict:
         d = asdict(self)

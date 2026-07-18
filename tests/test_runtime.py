@@ -297,3 +297,21 @@ def test_seed_state_overlays_pending_decision_exit_levels(tmp_path):
     assert pos.stop == 7366.5
     assert pos.target == 7349.4
     assert pos.strategy == "mean-reversion-US500"
+
+
+def test_runtime_config_parses_regime_filters(monkeypatch, tmp_path):
+    _set_runtime_paths(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "TALIM_REGIME_FILTERS",
+        "momentum-US500:atr-high,rsi2-reversion:atr-low",
+    )
+
+    config = RuntimeConfig.from_env()
+
+    assert dict(config.regime_filters) == {
+        "momentum-US500": "atr-high",
+        "rsi2-reversion": "atr-low",
+    }
+
+    monkeypatch.delenv("TALIM_REGIME_FILTERS")
+    assert RuntimeConfig.from_env().regime_filters == ()

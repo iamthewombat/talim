@@ -36,6 +36,7 @@ from talim.risk.config import RiskConfigError, load_validated_config
 from talim.risk.pnl_tracker import PnLSnapshot, PnLTracker
 from talim.risk.rules import RiskRules
 from talim.models.bar import OHLCVBar
+from talim.regime.atr_gate import parse_regime_filters
 from talim.strategy.indicators import ema
 from talim.strategy.loader import load_strategy
 
@@ -126,6 +127,7 @@ class RuntimeConfig:
     strategies: tuple[str, ...] = ()
     default_qty: float = 1.0
     bar_window: int = 50
+    regime_filters: tuple[tuple[str, str], ...] = ()
     checkpoint_db: Path = Path("state/talim_checkpoints.db")
     episodic_db: Path = Path("state/episodic.db")
     backtest_history_db: Path = Path("state/backtest_history.db")
@@ -149,6 +151,9 @@ class RuntimeConfig:
             strategies=tuple(_split_csv(os.environ.get("TALIM_STRATEGIES"))),
             default_qty=_env_float("TALIM_DEFAULT_QTY", 1.0),
             bar_window=_env_int("TALIM_BAR_WINDOW", 50),
+            regime_filters=tuple(
+                sorted(parse_regime_filters(os.environ.get("TALIM_REGIME_FILTERS")).items())
+            ),
             checkpoint_db=Path(
                 os.environ.get("TALIM_CHECKPOINT_DB", "state/talim_checkpoints.db")
             ),
@@ -1310,6 +1315,7 @@ def bootstrap_runtime(config: RuntimeConfig | None = None) -> Runtime:
         price_feed,
         strategies=strategies,
         bar_window=config.bar_window,
+        regime_filters=dict(config.regime_filters),
     )
     _seed_mock_demo_data(config, exchange, price_feed)
     configure_execute(

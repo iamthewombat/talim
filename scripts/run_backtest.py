@@ -6,8 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import time as dtime
+
+import pandas as pd
 
 from talim.backtest.costs import DEFAULT_COSTS_PATH, load_cost_config
+from talim.backtest.data_loader import load_quotes
 from talim.backtest.engine import run_backtest
 from talim.backtest.history import BacktestHistory, default_history_path
 from talim.backtest.sizing import BacktestSizingConfig
@@ -108,7 +112,65 @@ def _build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_COSTS_PATH),
         help="Path to the cost assumptions JSON (default: config/backtest_costs.json)",
     )
+    parser.add_argument(
+        "--start",
+        default=None,
+        help="Drop bars before this UTC timestamp, e.g. 2015-01-01 (inclusive)",
+    )
+    parser.add_argument(
+        "--end",
+        default=None,
+        help="Drop bars at/after this UTC timestamp, e.g. 2025-01-01 (exclusive; use to hold out OOS data)",
+    )
+    parser.add_argument(
+        "--per-bar-costs",
+        action="store_true",
+        help=(
+            "Charge each fill that bar's actual half-spread from BID/ASK rows in "
+            "the canonical parquet, plus --slippage-frac x spread per side. "
+            "Overrides the flat venue spread/slippage (commission still applies)."
+        ),
+    )
+    parser.add_argument(
+        "--slippage-frac",
+        type=float,
+        default=0.25,
+        help="Per-side slippage as a fraction of the bar's spread (per-bar costs mode; default 0.25)",
+    )
+    parser.add_argument(
+        "--regime-filter",
+        choices=("atr-high", "atr-low"),
+        default=None,
+        help=(
+            "Allow NEW entries only when ATR(14) is above (atr-high) or below "
+            "(atr-low) its own 100-bar average. Overlay uses fixed constants; "
+            "indicators and open trades are unaffected."
+        ),
+    )
+    parser.add_argument(
+        "--session-hours",
+        default=None,
+        help=(
+            "Only allow NEW entries inside this UTC window, e.g. 00:00-06:00 "
+            "(ASX cash) or 14:30-21:00 (US cash). Indicators still see all bars; "
+            "windows may wrap midnight."
+        ),
+    )
     return parser
+
+
+def _parse_session_hours(raw: str) -> tuple[dtime, dtime]:
+    try:
+        start_raw, end_raw = raw.split("-")
+        parts = []
+        for chunk in (start_raw, end_raw):
+            bits = chunk.strip().split(":")
+            parts.append(dtime(int(bits[0]), int(bits[1]) if len(bits) > 1 else 0))
+        return parts[0], parts[1]
+    except (ValueError, IndexError) as exc:
+        raise ValueError(
+            f"invalid --session-hours {raw!r}; expected HH:MM-HH:MM (UTC)"
+        ) from exc
 
 
 def main() -> int:
@@ -136,6 +198,16 @@ def main() -> int:
         )
 
     try:
+        start = pd.Timestamp(args.start, tz="UTC") if args.start else None
+        end = pd.Timestamp(args.end, tz="UTC") if args.end else None
+        session_window = (
+            _parse_session_hours(args.session_hours) if args.session_hours else None
+        )
+        quotes = None
+        if args.per_bar_costs:
+            if not args.timeframe:
+                raise ValueError("--per-bar-costs requires --timeframe")
+            quotes = load_quotes(args.data_dir, args.instrument, args.timeframe)
         sizing = BacktestSizingConfig(
             initial_capital=args.initial_capital,
             mode=args.sizing_mode,
@@ -153,6 +225,12 @@ def main() -> int:
             param_variants=variants,
             sizing=sizing,
             costs=costs,
+            start=start,
+            end=end,
+            session_window=session_window,
+            quotes=quotes,
+            slippage_frac=args.slippage_frac,
+            regime_filter=args.regime_filter,
         )
     except StrategyParamError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -193,7 +271,25 @@ def main() -> int:
 
     payload = {
         "results": [result.to_dict() for result in results],
-        "costs": costs.to_dict() if costs is not None else None,
+        "window": {
+            "start": str(start) if start is not None else None,
+            "end": str(end) if end is not None else None,
+            "session_hours_utc": args.session_hours,
+            "regime_filter": args.regime_filter,
+        },
+        "costs": (
+            {
+                "mode": "per-bar",
+                "slippage_frac": args.slippage_frac,
+                "quote_bars": int(len(quotes)),
+                "median_spread_points": float(
+                    (quotes["ask_close"] - quotes["bid_close"]).median()
+                ),
+                "commission": costs.to_dict() if costs is not None else None,
+            }
+            if quotes is not None
+            else (costs.to_dict() if costs is not None else None)
+        ),
         "sizing": {
             "initial_capital": sizing.initial_capital,
             "mode": sizing.mode,

@@ -21,6 +21,7 @@ import pandas as pd
 from talim.app.state import TalimState
 from talim.connectors.pricefeed.base import BasePriceFeed
 from talim.models.bar import OHLCVBar
+from talim.regime.atr_gate import atr_regime_allows
 from talim.regime.classifier import RegimeClassifier, classify_regime
 from talim.regime.fingerprint import compute_fingerprint, compute_atr
 from talim.strategy.base import BaseStrategy
@@ -43,6 +44,7 @@ class ScannerContext:
         self.regime_classifier: RegimeClassifier | None = None
         self.regime_change_threshold: float = 1.25
         self.regime_persistence_bars: int = 2
+        self.regime_filters: dict[str, str] = {}  # strategy name -> atr-high | atr-low
         self._bar_history: dict[str, list[OHLCVBar]] = {}
         self._last_emitted_signal: dict[tuple[str, str], tuple[str, str]] = {}
 
@@ -71,6 +73,7 @@ class ScannerContext:
         self.regime_classifier = None
         self.regime_change_threshold = 1.25
         self.regime_persistence_bars = 2
+        self.regime_filters = {}
         self._bar_history.clear()
         self._last_emitted_signal.clear()
 
@@ -86,6 +89,7 @@ def configure_scanner(
     regime_classifier: RegimeClassifier | None = None,
     regime_change_threshold: float = 1.25,
     regime_persistence_bars: int = 2,
+    regime_filters: dict[str, str] | None = None,
 ) -> ScannerContext:
     """Configure the scanner's injected dependencies."""
     _context.reset()
@@ -93,6 +97,7 @@ def configure_scanner(
     _context.regime_classifier = regime_classifier
     _context.regime_change_threshold = regime_change_threshold
     _context.regime_persistence_bars = max(1, regime_persistence_bars)
+    _context.regime_filters = dict(regime_filters or {})
     _context.set_price_feed(price_feed)
     price_feed.on_bar(_context.record_bar)
 
@@ -231,7 +236,9 @@ def _should_emit_signal(strategy_name: str, signal: Signal, latest_bar: OHLCVBar
       the warm-up window are useful for indicator state but should not re-alert.
     - suppress duplicate same-strategy/instrument/side/timestamp emissions across
       repeated scans of the same latest bar.
-    - block momentum cross entries while the persisted regime is ranging.
+    - block momentum cross entries while the persisted regime is ranging —
+      unless the strategy has an explicit ATR regime filter, which then owns
+      regime control (keeps live behaviour identical to the validated backtest).
     """
     if signal.timestamp != latest_bar.timestamp:
         logger.info(
@@ -243,7 +250,11 @@ def _should_emit_signal(strategy_name: str, signal: Signal, latest_bar: OHLCVBar
         )
         return False
 
-    if _is_momentum_strategy(strategy_name) and regime == "ranging":
+    if (
+        _is_momentum_strategy(strategy_name)
+        and regime == "ranging"
+        and strategy_name not in _context.regime_filters
+    ):
         logger.info(
             "signal_scanner: suppressing %s %s signal for %s in ranging regime",
             strategy_name,
@@ -358,6 +369,15 @@ def signal_scanner(state: TalimState) -> TalimState:
                 if sig is not None:
                     last_signal = sig
             if last_signal is not None:
+                rf = _context.regime_filters.get(name)
+                if rf and not atr_regime_allows(window, rf):
+                    logger.info(
+                        "signal_scanner: suppressing %s signal on %s — %s regime gate not met",
+                        name,
+                        instrument,
+                        rf,
+                    )
+                    continue
                 # Attach regime context now that we have the fingerprint.
                 regime_label = update.get("regime") or state.get("regime", "")
                 if not _should_emit_signal(name, last_signal, latest_bar, regime_label):

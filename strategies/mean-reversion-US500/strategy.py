@@ -36,6 +36,7 @@ class MeanReversionUS500(BaseStrategy):
         self._atr = AtrStream(period=14)
         self._bb = BollingerStream(self.bb_period, self.bb_std)
         self._prev_close: float | None = None
+        self._last_bands = None
 
     @property
     def name(self) -> str:
@@ -87,9 +88,18 @@ class MeanReversionUS500(BaseStrategy):
             return ValidationResult("condition_invalidated", False, "mean reversion invalidated: price has already reverted to/through the Bollinger midline", current, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
         return ValidationResult("valid", True, "mean-reversion condition remains before Bollinger midline reversion", current, base.movement_r, base.movement_atr, base.bars_since_signal, base.evaluated_at)
 
+    def exit_signal(self, bar: OHLCVBar, side: str) -> bool:
+        bands = self._last_bands
+        if bands is None:
+            return False
+        if side == "long":
+            return bar.close >= bands.middle
+        return bar.close <= bands.middle
+
     def on_bar(self, bar: OHLCVBar) -> Signal | None:
         atr = self._atr.update(bar.high, bar.low, bar.close)
         bands = self._bb.update(bar.close)
+        self._last_bands = bands
         prev_close = self._prev_close
         self._prev_close = bar.close
 
