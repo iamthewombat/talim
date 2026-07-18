@@ -131,6 +131,7 @@ class BacktestHistory:
         strategy: str | None = None,
         instrument: str | None = None,
         triggered_by: str | None = None,
+        exclude_triggered_by: str | None = None,
         status: str | None = None,
         timeframe: str | None = None,
         since: str | None = None,
@@ -149,6 +150,9 @@ class BacktestHistory:
         if triggered_by is not None:
             clauses.append("triggered_by = ?")
             params.append(triggered_by)
+        if exclude_triggered_by is not None:
+            clauses.append("triggered_by != ?")
+            params.append(exclude_triggered_by)
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
@@ -176,6 +180,7 @@ class BacktestHistory:
         *,
         strategy: str | None = None,
         instrument: str | None = None,
+        exclude_triggered_by: str | None = None,
         status: str | None = None,
         timeframe: str | None = None,
         since: str | None = None,
@@ -185,6 +190,7 @@ class BacktestHistory:
         rows = self.list_runs(
             strategy=strategy,
             instrument=instrument,
+            exclude_triggered_by=exclude_triggered_by,
             status=status,
             timeframe=timeframe,
             since=since,

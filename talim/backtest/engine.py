@@ -138,18 +138,20 @@ def _simulate(
         if open_sig is not None:
             # Bracket exits first (intrabar; conservative — stop before target),
             # then the strategy's own condition exit at the bar close.
+            # A stop/target <= 0 means "no bracket on that side" — same
+            # semantics as the live position monitor.
             if open_sig.side == "long":
-                if bar.low <= open_sig.stop:
+                if open_sig.stop > 0 and bar.low <= open_sig.stop:
                     _close(open_sig.stop, idx)
                     return
-                if bar.high >= open_sig.target:
+                if open_sig.target > 0 and bar.high >= open_sig.target:
                     _close(open_sig.target, idx)
                     return
             else:
-                if bar.high >= open_sig.stop:
+                if open_sig.stop > 0 and bar.high >= open_sig.stop:
                     _close(open_sig.stop, idx)
                     return
-                if bar.low <= open_sig.target:
+                if open_sig.target > 0 and bar.low <= open_sig.target:
                     _close(open_sig.target, idx)
                     return
             if strategy.exit_signal(bar, open_sig.side):
