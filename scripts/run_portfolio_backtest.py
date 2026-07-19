@@ -61,7 +61,36 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--per-bar-costs", action="store_true")
     parser.add_argument("--slippage-frac", type=float, default=0.25)
     parser.add_argument("--initial-capital", type=float, default=100_000.0)
+    parser.add_argument(
+        "--sizing-mode",
+        choices=("fixed_qty", "risk_pct"),
+        default="fixed_qty",
+        help="Position sizing model to use for simulated trades",
+    )
     parser.add_argument("--fixed-qty", type=float, default=1.0)
+    parser.add_argument(
+        "--risk-per-trade-pct",
+        type=float,
+        default=0.01,
+        help="Fraction of available capital to risk per trade when --sizing-mode=risk_pct",
+    )
+    parser.add_argument(
+        "--max-position-qty",
+        type=float,
+        default=None,
+        help="Optional cap on quantity per simulated trade",
+    )
+    parser.add_argument(
+        "--max-total-exposure",
+        type=float,
+        default=None,
+        help="Optional cap on notional exposure per simulated trade",
+    )
+    parser.add_argument(
+        "--no-compound",
+        action="store_true",
+        help="Disable compounding for risk_pct sizing",
+    )
     return parser
 
 
@@ -107,7 +136,13 @@ def main() -> int:
         return [(ts, pnl) for ts, pnl in curve if ts >= entries_ts]
 
     sizing = BacktestSizingConfig(
-        initial_capital=args.initial_capital, fixed_qty=args.fixed_qty
+        initial_capital=args.initial_capital,
+        mode=args.sizing_mode,
+        fixed_qty=args.fixed_qty,
+        risk_per_trade_pct=args.risk_per_trade_pct,
+        max_position_qty=args.max_position_qty,
+        max_total_exposure=args.max_total_exposure,
+        compound=not args.no_compound,
     )
 
     all_trades = []
@@ -169,6 +204,15 @@ def main() -> int:
             "mode": "per-bar" if args.per_bar_costs else "flat",
             "venue": args.costs_venue,
             "slippage_frac": args.slippage_frac,
+        },
+        "sizing": {
+            "initial_capital": sizing.initial_capital,
+            "mode": sizing.mode,
+            "fixed_qty": sizing.fixed_qty,
+            "risk_per_trade_pct": sizing.risk_per_trade_pct,
+            "max_position_qty": sizing.max_position_qty,
+            "max_total_exposure": sizing.max_total_exposure,
+            "compound": sizing.compound,
         },
         "legs": leg_reports,
         "combined": {
