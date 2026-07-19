@@ -79,6 +79,9 @@ services:
       - ./data:/app/data
       - ./state:/app/state
       - ./backups:/app/backups
+      # Dashboard static assets — mounted so JS/CSS-only tweaks land without
+      # a rebuild. Keep read-only so the container cannot mutate host source.
+      - ./talim/api/static:/app/talim/api/static:ro
     expose:
       - "8000"
 

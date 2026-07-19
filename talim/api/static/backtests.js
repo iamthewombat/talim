@@ -387,20 +387,25 @@ function renderDetail() {
     body.appendChild(el("p", { class: "muted", text: "Pick a variation first." }));
     return;
   }
-  body.appendChild(el("h3", { text: `${outcome.strategy} · ${outcome.instrument} · ${outcome.timeframe || "—"}` }));
+  const isLive = state.liveStrategies.includes(outcome.strategy);
+  body.appendChild(el("div", { class: "rank-title" }, [
+    el("h3", { text: `${outcome.strategy} · ${outcome.instrument} · ${outcome.timeframe || "—"}` }),
+    isLive ? livePill() : el("span", { class: "pill", text: "not deployed" }),
+  ]));
   body.appendChild(paramChips(outcome.params));
   body.appendChild(el("div", { class: "metric-grid detail-metrics" }, [
-    metric4("Total P&L", fmtSigned(outcome.net_pnl), pnlClass(outcome.net_pnl)),
-    metric4("Avg P&L", fmtSigned(outcome.avg_net_pnl), pnlClass(outcome.avg_net_pnl)),
-    metric4("Avg Sharpe", fmtNum(outcome.sharpe_ratio, 3)),
-    metric4("Best Sharpe", fmtNum(outcome.best_sharpe, 3)),
-    metric4("Sortino", fmtNum(outcome.sortino_ratio, 3)),
+    metric4("Total P&L (pts)", fmtSigned(outcome.net_pnl), pnlClass(outcome.net_pnl)),
+    metric4("Avg P&L (pts)", fmtSigned(outcome.avg_net_pnl), pnlClass(outcome.avg_net_pnl)),
+    metric4("Sharpe (per-trade)", fmtNum(outcome.sharpe_ratio, 3)),
+    metric4("Best Sharpe (per-trade)", fmtNum(outcome.best_sharpe, 3)),
+    metric4("Sortino (per-trade)", fmtNum(outcome.sortino_ratio, 3)),
     metric4("Profit factor", fmtNum(outcome.profit_factor, 3)),
-    metric4("Max DD", fmtSigned(outcome.max_drawdown), pnlClass(outcome.max_drawdown)),
+    metric4("Max DD (pts)", fmtSigned(outcome.max_drawdown), pnlClass(outcome.max_drawdown)),
     metric4("Win rate", fmtPct(outcome.win_rate)),
     metric4("Trades", outcome.total_trades == null ? "—" : String(outcome.total_trades)),
     metric4("Runs", String(outcome.run_count)),
   ]));
+  body.appendChild(sizingContextPanel(outcome));
   body.appendChild(kv({
     period_start: outcome.period_start,
     period_end: outcome.period_end,
@@ -410,6 +415,82 @@ function renderDetail() {
     artifact_paths: (outcome.artifact_paths || []).join(", "),
     sample_run_ids: (outcome.run_ids || []).join(", "),
   }));
+}
+
+function sizingContextPanel(outcome) {
+  const panel = el("div", { class: "sizing-context" }, [
+    el("h4", { text: "Sizing context" }),
+    el("p", { class: "muted", text:
+      "Metrics above are per-trade / points at the sizing used when the run was recorded " +
+      "(default: fixed qty 1 on $100k). Annualised return depends on how the strategy is sized " +
+      "in production — Sharpe stays roughly constant across sizings; expected return ≈ Sharpe × " +
+      "chosen annualised volatility." }),
+  ]);
+  const scenarios = sizingScenariosFor(outcome);
+  if (scenarios) {
+    const grid = el("div", { class: "metric-grid sizing-scenarios" });
+    for (const row of scenarios.rows) {
+      grid.appendChild(el("div", { class: "metric" }, [
+        el("span", { class: "muted", text: row.label }),
+        el("strong", { class: row.cls || "", text: row.value }),
+      ]));
+    }
+    panel.appendChild(el("h5", { text: scenarios.title }));
+    panel.appendChild(grid);
+    if (scenarios.note) {
+      panel.appendChild(el("p", { class: "muted small-note", text: scenarios.note }));
+    }
+  } else {
+    panel.appendChild(el("p", { class: "muted small-note", text:
+      "Sizing sweep not on file for this variation yet. Combined-book sizing figures are in " +
+      "STRATEGY_SEARCH_PROGRESS.md." }));
+  }
+  return panel;
+}
+
+// Measured sizing sweeps from tonight's run_portfolio_backtest.py sweep
+// (US500.proxy 1d, per-bar costs, in-sample 2015-2024). Keyed by strategy so
+// per-leg detail views can show the risk-per-trade table without re-running.
+// Extend as more sweeps are recorded.
+const SIZING_SWEEP_LIBRARY = {
+  "US500.proxy|1d|momentum-US500": {
+    title: "Sized in-sample scenarios (2015–2024, atr-high gate)",
+    rows: [
+      { label: "1% risk/trade — Net P&L", value: "+$20,347" },
+      { label: "1% — Ann Sharpe", value: "0.53" },
+      { label: "1% — Max DD", value: "−6.1%", cls: "pnl-neg" },
+      { label: "2% — Net P&L", value: "≈ +$41k" },
+      { label: "2% — Max DD (approx)", value: "≈ −12%", cls: "pnl-neg" },
+    ],
+    note: "Approx linear scaling in risk-per-trade. Live regime: atr-high.",
+  },
+  "US500.proxy|1d|rsi2-reversion": {
+    title: "Sized in-sample scenarios (2015–2024, atr-low gate)",
+    rows: [
+      { label: "1% risk/trade — Net P&L", value: "+$13,035" },
+      { label: "1% — Ann Sharpe", value: "0.67" },
+      { label: "1% — Max DD", value: "−2.6%", cls: "pnl-neg" },
+      { label: "2% — Net P&L", value: "≈ +$26k" },
+      { label: "2% — Max DD (approx)", value: "≈ −5%", cls: "pnl-neg" },
+    ],
+    note: "Approx linear scaling in risk-per-trade. Live regime: atr-low.",
+  },
+  "US500.proxy|1d|ibs-reversion": {
+    title: "Sized in-sample scenarios (2015–2024, ungated)",
+    rows: [
+      { label: "1% risk/trade — Net P&L", value: "+$13,673" },
+      { label: "1% — Ann Sharpe", value: "0.74" },
+      { label: "1% — Max DD", value: "−2.9%", cls: "pnl-neg" },
+      { label: "2% — Net P&L", value: "≈ +$27k" },
+      { label: "2% — Max DD (approx)", value: "≈ −6%", cls: "pnl-neg" },
+    ],
+    note: "Validated survivor; not yet in live config.",
+  },
+};
+
+function sizingScenariosFor(outcome) {
+  const key = `${outcome.instrument || ""}|${outcome.timeframe || ""}|${outcome.strategy || ""}`;
+  return SIZING_SWEEP_LIBRARY[key] || null;
 }
 
 function kv(rows) {
