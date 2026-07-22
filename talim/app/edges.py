@@ -14,6 +14,7 @@ that an in-flight trade is never delayed by a parameter rebuild.
 
 from __future__ import annotations
 
+from talim.app.hitl_mode import is_hitl_enabled
 from talim.app.state import TalimState
 
 
@@ -45,5 +46,7 @@ def route_after_risk(state: TalimState) -> str:
     if sig is None:
         return "notify" if state.get("pending_notification") is not None else "end"
     if getattr(sig, "action", "enter") == "exit":
+        return "execute"
+    if not is_hitl_enabled():
         return "execute"
     return "hitl_interrupt"

@@ -181,6 +181,15 @@ def execute(state: TalimState) -> TalimState:
                 # A broker close flattens the whole stack; link the most
                 # recent entry, matching the dashboard's LIFO pairing.
                 entry_decision_id = closed_ids[-1] if closed_ids else None
+            from talim.app.hitl_mode import is_hitl_enabled
+            auto_mode = (
+                sig.action != "exit"
+                and not is_hitl_enabled()
+            )
+            decision_action = "auto-approve" if auto_mode else "approve"
+            decision_notes = f"order_id={order.order_id} order_side={order.side} qty={order.qty}"
+            if auto_mode:
+                decision_notes = f"hitl_bypassed {decision_notes}"
             ctx.episodic.record_decision(
                 timestamp=datetime.now(tz=timezone.utc).isoformat(),
                 instrument=sig.instrument,
@@ -196,8 +205,8 @@ def execute(state: TalimState) -> TalimState:
                 signal_type=sig.action,
                 pnl=realised_pnl if sig.action == "exit" else 0.0,
                 atr_ratio=state.get("atr_ratio"),
-                action="approve",
-                notes=f"order_id={order.order_id} order_side={order.side} qty={order.qty}",
+                action=decision_action,
+                notes=decision_notes,
                 qty=closing_position.qty if closing_position is not None else order.qty,
                 entry_decision_id=entry_decision_id,
             )

@@ -191,6 +191,16 @@ class OperatorStrategyToggleResponse(BaseModel):
     available: list[str] = Field(default_factory=list)
 
 
+class HitlModeResponse(BaseModel):
+    enabled: bool
+    changed_at: str | None = None
+    changed_by: str | None = None
+
+
+class HitlModeRequest(BaseModel):
+    enabled: bool
+
+
 # Module-level halt flag shared across all requests in this process.
 _halt_state: dict[str, bool] = {"halted": False}
 
@@ -369,16 +379,40 @@ def create_app(
         return HaltResponse(halted=is_halted())
 
     @app.get(
+        "/talim/operator/hitl",
+        response_model=HitlModeResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_hitl_get() -> HitlModeResponse:
+        """Return current HITL mode."""
+        from talim.app.hitl_mode import get_hitl_mode
+        return HitlModeResponse(**get_hitl_mode())
+
+    @app.patch(
+        "/talim/operator/hitl",
+        response_model=HitlModeResponse,
+        dependencies=[Depends(require_secret)],
+    )
+    def operator_hitl_set(req: HitlModeRequest) -> HitlModeResponse:
+        """Toggle HITL mode on or off."""
+        from talim.app.hitl_mode import set_hitl_enabled
+        result = set_hitl_enabled(req.enabled, actor="operator")
+        return HitlModeResponse(**result)
+
+    @app.get(
         "/talim/operator/status",
         response_model=OperatorStatusResponse,
         dependencies=[Depends(require_secret)],
     )
     def operator_status() -> OperatorStatusResponse:
         """Return runtime health/config for an operator client such as OpenClaw."""
+        from talim.app.hitl_mode import get_hitl_mode
         rt = require_runtime()
+        status = rt.operator_status()
+        status["hitl"] = get_hitl_mode()
         return OperatorStatusResponse(
             halted=is_halted(),
-            runtime=rt.operator_status(),
+            runtime=status,
         )
 
     @app.get(
