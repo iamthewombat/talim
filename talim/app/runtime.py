@@ -1291,7 +1291,9 @@ def _seed_mock_demo_data(config: RuntimeConfig, exchange: Any, price_feed: Any) 
 
 def bootstrap_runtime(config: RuntimeConfig | None = None) -> Runtime:
     """Create and wire the runtime according to env/config."""
+    from talim.app.hitl_mode import load_hitl_mode
     config = config or RuntimeConfig.from_env()
+    load_hitl_mode()
 
     _ensure_parent(config.checkpoint_db)
     _ensure_parent(config.episodic_db)

@@ -551,6 +551,20 @@ dialog.talim-dialog input[type="password"] {
 }
 .rank-title strong { overflow-wrap: anywhere; }
 .rank-title h2 { margin: 0; text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--fg); }
+.rank-title h3 { margin: 0; text-transform: none; letter-spacing: 0; font-size: 15px; color: var(--fg); }
+.rank-title h4, .rank-title h5 { margin: 0; }
+.sizing-context {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(139, 147, 161, 0.05);
+}
+.sizing-context h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.sizing-context h5 { margin: 12px 0 6px; font-size: 13px; color: var(--fg); }
+.sizing-context p { margin: 4px 0; font-size: 12px; }
+.sizing-scenarios { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.small-note { font-size: 11px; opacity: 0.85; }
 .rank-badge {
   flex: 0 0 auto;
   display: inline-flex;
